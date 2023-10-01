@@ -5,8 +5,19 @@
 _see: https://en.wikipedia.org/wiki/MDA_framework_
 
 ### Mechanics
-- [ ] tbd
-- [ ] tbd
+-     [>][ ] terrain generation
+-     [>][ ] flora & fauna generation
+           [ ][ ] fauna assigned scan points
+           [ ][ ] flora assigned scan points
+           [ ][ ] fauna assigned dangerous bool
+           [ ][ ] flora assigned dangerous bool
+           [ ][ ] randomized special flora request
+           [ ][ ] randomized special fauna request
+  
+-      [>][ ]  Peep Generation
+           [ ][ ] peep classes with different specialties
+           [ ][ ] peep AI for finding research nearby
+           [ ][ ] peep AI for running away from recognized danger    
 
 ### Dynamics
 - [ ] tbd
