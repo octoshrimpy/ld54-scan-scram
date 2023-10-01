@@ -1,64 +1,30 @@
+# TODO.md
 
-# Scan & Scram
+## Week 1: Core Mechanics and Features
+- [ ] Finalize Game Design Document, set up Godot project.
+- [ ] Implement planet scanning mechanic.
+- [ ] Implement aggressive fauna/flora/natives.
+- [ ] Implement researcher death and cloning mechanic.
+- [ ] Implement basic spaceship upgrades.
+- [ ] Implement research point collection and tracking.
+- [ ] Add basic UI for research points and time limit.
 
-## MVP
-_see: https://en.wikipedia.org/wiki/MDA_framework_
+## Week 2: Aesthetics, Modes, and UI
+- [ ] Implement time limit mechanic.
+- [ ] Add casual and hardcore modes.
+- [ ] Implement auto-save feature.
+- [ ] Import and integrate pixel art assets.
+- [ ] Add sound effects and background music.
+- [ ] Implement tutorial levels.
+- [ ] Initial round of bug fixing.
 
-### Mechanics
--     [>][ ] terrain generation
--     [>][ ] flora & fauna generation
-           [ ][ ] fauna assigned scan points
-           [ ][ ] flora assigned scan points
-           [ ][ ] fauna assigned dangerous bool
-           [ ][ ] flora assigned dangerous bool
-           [ ][ ] randomized special flora request
-           [ ][ ] randomized special fauna request
-  
--      [>][ ]  Peep Generation
-           [ ][ ] peep classes with different specialties
-           [ ][ ] peep AI for finding research nearby
-           [ ][ ] peep AI for running away from recognized danger    
-
-### Dynamics
-- [ ] tbd
-- [ ] tbd
-
-### Aethetics
-- [ ] tbd
-- [ ] tbd
-
-## v1
-- [ ] tbd
-
-## v2
-- [ ] tbd
+## Extra Week: Testing and Additional Features
+- [ ] Final round of testing and bug fixing.
+- [ ] Implement leaderboards.
+- [ ] Add achievements.
+- [ ] Implement daily/weekly challenges.
+- [ ] Build game for all platforms.
+- [ ] Deploy to game jam and other platforms.
 
 ---
 
-[ ][ ] whatever task name
-
-[ urgency ][ status ]
-    status: note about it if necessary (block, delegate, think)
-    
-[!][?] rush bees into form pls
-[ ][~] scorps quot
-    delegate to username
-
----
-
-## urgency
-[!] rush
-[>] important
-[ ] neutral
-[*] icebox
-
-
-## status
-[?] more thought - internal block
-[/] blocked - external block
-
-[ ] todo
-[o] ongoing
-[x] done
-[-] cancelled
-[~] delegated 
