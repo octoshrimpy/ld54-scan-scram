@@ -1,15 +1,15 @@
 # TODO.md
 
 ## Week 1: Core Mechanics and Features
-- [ ] Finalize Game Design Document, set up Godot project
-  - [ ] doc
-  - [ ] init godot proj
-  - [ ] single layer worldgen
+- [o] Finalize Game Design Document, set up Godot project
+  - [x] doc
+  - [x] init godot proj
+  - [o] single layer worldgen :@jmccardle
   - [ ] multi-layer worldgen
   - [ ] pathfinding with peeps
-    - [ ] walking animation
-    - [ ] climb up/down animation
-  - [ ] design ship
+    - [-] walking animation
+    - [-] climb up/down animation
+  - [o] design ship :@octoshrimpy
   
 - [ ] Implement planet scanning mechanic
   - [ ] implement spawn fauna
