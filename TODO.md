@@ -4,14 +4,16 @@
 - [o] Finalize Game Design Document, set up Godot project
   - [x] doc
   - [x] init godot proj
-  - [o] single layer worldgen :@jmccardle
+  - [o] single layer worldgen :@vice
   - [ ] multi-layer worldgen
-  - [ ] pathfinding with peeps
+  - [o] pathfinding with peeps :@spelf
     - [-] walking animation
     - [-] climb up/down animation
-  - [o] design ship :@octoshrimpy
+  - [o] design ship :@octo
   
 - [ ] Implement planet scanning mechanic
+  - [o] design flora :@octo
+  - [o] design fauna :@octo
   - [ ] implement spawn fauna
   - [ ] implement spawn flora
   - [ ] assign points to spawns
