@@ -1,5 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://c4lgh5eb3j056"]
+[gd_scene load_steps=3 format=3 uid="uid://c4lgh5eb3j056"]
 
+[ext_resource type="Script" path="res://Map.gd" id="1_bvqwc"]
 [ext_resource type="TileSet" uid="uid://b5h3lf2rqpg5u" path="res://art/main.tres" id="1_rbax2"]
 
 [node name="Node3D" type="Node3D"]
@@ -7,6 +8,7 @@
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
 
 [node name="Map" type="Node2D" parent="."]
+script = ExtResource("1_bvqwc")
 
 [node name="TileMap" type="TileMap" parent="Map"]
 y_sort_enabled = true
