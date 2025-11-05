@@ -3,6 +3,8 @@
 extends TileMapLayer
 class_name BoulderGen
 
+const MapUtilsRef := preload("res://utils/map_utils.gd")
+
 # ───────────────────────── Scene / map wiring ─────────────────────────────────
 @export var map_ref: NodePath                    # node with surface_z_at(x,y) and _project_iso3d(x,y,z)
 @export var boulders_root: Node2D                # parent for spawned sprites (defaults to self)
@@ -19,17 +21,17 @@ class_name BoulderGen
 @export var H: int = 20
 
 # ───────────────────────── Placement parameters ───────────────────────────────
-@export var rock_count_min: int = 2              # compounds per regen
-@export var rock_count_max: int = 3
+@export var rock_count_min: int = 4              # compounds per regen
+@export var rock_count_max: int = 8
 @export var spawn_margin_cells: int = 1          # avoid outer border when picking cells
 @export var slope_allow: int = 3                 # allow some slope
 
 # Compound cluster (all pieces share the same ground level)
-@export var pieces_min: int = 3                  # tiles per compound stone
-@export var pieces_max: int = 7
+@export var pieces_min: int = 4                  # tiles per compound stone
+@export var pieces_max: int = 9
 @export var unique_per_compound: bool = true     # ⟵ NEW: do not reuse the same tile in one compound
-@export var max_x_jitter_px: int = 8             # keep center within ±8 px (smallest piece is 8×8)
-@export var y_jitter_px: int = 2                 # small ±y jitter to interleave edges (0 = perfectly level)
+@export var max_x_jitter_px: int = 10            # keep center within ±8 px (smallest piece is 8×8)
+@export var y_jitter_px: int = 3                 # small ±y jitter to interleave edges (0 = perfectly level)
 
 # Sorting
 @export var rock_z_offset: int = 4               # above terrain at column
@@ -47,6 +49,7 @@ class_name BoulderGen
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _atlas_src: TileSetAtlasSource
 var _atlas_tex: Texture2D
+var _map_cache: Node
 
 # ───────────────────────── Lifecycle ──────────────────────────────────────────
 func _enter_tree() -> void:
@@ -62,6 +65,7 @@ func _ready() -> void:
 		boulders_root = self
 
 	_rng.randomize()
+	_map_cache = _resolve_map()
 
 	# Resolve atlas source/texture from THIS TileMapLayer's TileSet
 	if tile_set == null:
@@ -75,6 +79,7 @@ func _ready() -> void:
 	if _atlas_tex == null:
 		push_warning("BoulderGen: Atlas source has no texture.")
 		return
+	_place_boulders()
 
 func _unhandled_input(e: InputEvent) -> void:
 	# Prefer named action…
@@ -91,6 +96,17 @@ func _regenerate_boulders() -> void:
 		_rng.seed = int(Time.get_ticks_usec())
 	_place_boulders()
 
+func regenerate_boulders(reseed: bool = false) -> void:
+	if reseed:
+		_rng.seed = int(Time.get_ticks_usec())
+		_place_boulders()
+	else:
+		_regenerate_boulders()
+
+func set_tile_region(min_corner: Vector2i, max_corner: Vector2i) -> void:
+	tile_min = min_corner
+	tile_max = max_corner
+
 # ───────────────────────── Placement entrypoint ───────────────────────────────
 func _place_boulders() -> void:
 	_clear_existing()
@@ -101,6 +117,8 @@ func _place_boulders() -> void:
 	var columns: Array[Vector2i] = []
 	for y in range(margin, H - margin):
 		for x in range(margin, W - margin):
+			if MapUtilsRef.column_has_water(_map_cache, x, y):
+				continue
 			if _is_flat_enough(x, y, slope_allow) and _map_surface_z(x, y) >= 0:
 				columns.append(Vector2i(x, y))
 
@@ -127,7 +145,7 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 	if _atlas_src == null or _atlas_tex == null:
 		return
 
-	var all_tiles: Array[Vector2i] = _tiles_in_rect(tile_min, tile_max) # inclusive rectangle
+	var all_tiles: Array[Vector2i] = _valid_tiles_in_rect(tile_min, tile_max)
 	if all_tiles.is_empty():
 		return
 	all_tiles.shuffle()
@@ -148,6 +166,8 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 			# allow repeats
 			tile_xy = all_tiles[_rng.randi_range(0, all_tiles.size() - 1)]
 
+		if not _atlas_src.has_tile(tile_xy):
+			continue
 		var region: Rect2i = _atlas_src.get_tile_texture_region(tile_xy)
 		if region.size == Vector2i.ZERO:
 			continue
@@ -166,7 +186,7 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 		spr.centered = false
 		spr.texture_filter = rock_filter
 		spr.z_as_relative = false
-		spr.z_index = _sort_key(cell.x, cell.y, z + rock_z_offset)
+		spr.z_index = MapUtilsRef.sort_key(cell.x, cell.y, z + rock_z_offset)
 		spr.set_meta("is_boulder", true)
 		boulders_root.add_child(spr)
 
@@ -188,23 +208,31 @@ func _tiles_in_rect(p0: Vector2i, p1: Vector2i) -> Array[Vector2i]:
 			out.append(Vector2i(tx, ty))
 	return out
 
-func _get_map() -> Node:
+func _valid_tiles_in_rect(p0: Vector2i, p1: Vector2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for tile_xy in _tiles_in_rect(p0, p1):
+		if _atlas_src != null and _atlas_src.has_tile(tile_xy):
+			out.append(tile_xy)
+	return out
+
+func _resolve_map() -> Node:
+	if map_ref.is_empty():
+		return null
 	return get_node_or_null(map_ref)
 
+func _get_map() -> Node:
+	if is_instance_valid(_map_cache):
+		return _map_cache
+	_map_cache = _resolve_map()
+	return _map_cache
+
 func _map_surface_z(x: int, y: int) -> int:
-	var m := _get_map()
-	if m == null or not m.has_method("surface_z_at"):
-		return -1
-	return int(m.call("surface_z_at", x, y))
+	return MapUtilsRef.surface_z(_get_map(), x, y)
 
 func _column_bottom_world(x: int, y: int, z: int) -> Vector2:
-	var m := _get_map()
-	if m != null and m.has_method("_project_iso3d"):
-		return Vector2(m.call("_project_iso3d", float(x), float(y), float(z)))
-	return global_position
-
-static func _sort_key(x: int, y: int, z: int) -> int:
-	return y * 128 + x * 4 + z
+	var map := _get_map()
+	var pos := MapUtilsRef.column_bottom_world(map, x, y, z)
+	return pos if map != null else global_position
 
 func _is_flat_enough(x: int, y: int, allow: int) -> bool:
 	var xm1: int = clampi(x - 1, 0, W - 1)

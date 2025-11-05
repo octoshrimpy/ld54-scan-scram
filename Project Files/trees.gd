@@ -1,8 +1,24 @@
 # trees.gd — TreeGen: groves → trees (trunk/branches/leaves) with per-tree outline bake
 # Godot 4.5.x
+class_name TreeGen
 extends Node2D
 
-const TreeOutlineFactory := preload("res://addons/outline/TreeOutlineFactory.gd")
+# const TreeOutlineFactory := preload("res://addons/outline/TreeOutlineFactory.gd")
+const MapUtilsRef := preload("res://utils/map_utils.gd")
+
+enum CellClass {
+	LAND,
+	SHORE_LAND,
+	SHORE_WATER,
+	WATER
+}
+
+const CELL_CLASS_NAMES := {
+	"land": CellClass.LAND,
+	"shore_land": CellClass.SHORE_LAND,
+	"shore_water": CellClass.SHORE_WATER,
+	"water": CellClass.WATER
+}
 
 # ───────────────────────────────── Scene/atlas refs ───────────────────────────
 @export var atlas_layer: TileMapLayer
@@ -29,6 +45,8 @@ const TreeOutlineFactory := preload("res://addons/outline/TreeOutlineFactory.gd"
 @export var footprint_half_width_cells: int = 1
 @export var require_grass_top: bool = false
 @export var allow_relaxed_retry: bool = true
+@export var shoreline_tree_target: int = 6
+@export var shoreline_spawn_attempts: int = 24
 
 # ───────────────────────── Bark / Leaf asset pools ────────────────────────────
 @export var bark_x_range: Vector2i = Vector2i(64, 67)
@@ -96,19 +114,195 @@ const TreeOutlineFactory := preload("res://addons/outline/TreeOutlineFactory.gd"
 @export var leaf_min_overlap_px: int = 2
 @export var leaf_snap_extra_px: int = 1
 
+const TREE_SPECIES: Array[Dictionary] = [
+	{
+		"id": "evergreen",
+		"label": "Evergreen Fir",
+		"biome": "land",
+		"spawn_profile": {
+			"allow_water": false,
+			"require_water": false,
+			"require_grass": true,
+			"preferred_classes": ["land", "shore_land"],
+			"weight": 1.0
+		},
+		"overrides": {
+			"trunk_total_px_min": 60,
+			"trunk_total_px_max": 84,
+			"trunk_width_px_min": 3,
+			"trunk_width_px_max": 5,
+			"branch_count_min": 4,
+			"branch_count_max": 6,
+			"branch_length_min_px": 8,
+			"branch_length_max_px": 14,
+			"branch_zone_min": 0.40,
+			"branch_zone_max": 0.95,
+			"branch_shift_px": 1,
+			"branch_dev_px": 1,
+			"branch_step_h_px": Vector2i(2, 3),
+			"branch_thickness_taper": 2,
+			"leaf_crown_radius_px": 4,
+			"leaf_crown_count_min": 10,
+			"leaf_crown_count_max": 18,
+			"leaf_single_on_branch_chance": 0.18,
+			"leaf_tip_count_min": 1,
+			"leaf_tip_count_max": 2,
+			"leaf_tip_radius_px": 4,
+			"leaf_tip_offset_up_px": 2,
+			"wiggle_prob": 0.18,
+			"max_lateral_px": 8
+		}
+	},
+	{
+		"id": "acacia",
+		"label": "Acacia Umbra",
+		"biome": "land",
+		"spawn_profile": {
+			"allow_water": false,
+			"require_water": false,
+			"require_grass": true,
+			"preferred_classes": ["land", "shore_land"],
+			"weight": 1.0
+		},
+		"overrides": {
+			"trunk_total_px_min": 44,
+			"trunk_total_px_max": 58,
+			"trunk_width_px_min": 4,
+			"trunk_width_px_max": 7,
+			"branch_count_min": 5,
+			"branch_count_max": 9,
+			"branch_length_min_px": 13,
+			"branch_length_max_px": 22,
+			"branch_zone_min": 0.15,
+			"branch_zone_max": 0.55,
+			"branch_shift_px": 2,
+			"branch_dev_px": 2,
+			"branch_step_h_px": Vector2i(3, 4),
+			"branch_thickness_taper": 1,
+			"leaf_crown_radius_px": 8,
+			"leaf_crown_count_min": 14,
+			"leaf_crown_count_max": 28,
+			"leaf_crown_offset_up_px": 1,
+			"leaf_single_on_branch_chance": 0.60,
+			"leaf_single_offset_radius_px": 4,
+			"leaf_tip_count_min": 2,
+			"leaf_tip_count_max": 3,
+			"leaf_tip_radius_px": 6,
+			"leaf_tip_offset_up_px": 1,
+			"wiggle_prob": 0.32,
+			"max_lateral_px": 14
+		}
+	},
+	{
+		"id": "mangrove",
+		"label": "Mangrove Lantern",
+		"biome": "water",
+		"spawn_profile": {
+			"allow_water": false,
+			"require_water": true,
+			"avoid_water_radius": 0,
+			"require_grass": false,
+			"prefer_shore": true,
+			"preferred_classes": ["shore_land"],
+			"allowed_classes": ["shore_land"],
+			"shore_only": true,
+			"micro_attempts": 32,
+			"spawn_margin_cells": 0,
+			"slope_allow": 4,
+			"weight": 1.35
+		},
+		"overrides": {
+			"trunk_total_px_min": 36,
+			"trunk_total_px_max": 52,
+			"trunk_width_px_min": 3,
+			"trunk_width_px_max": 5,
+			"branch_count_min": 4,
+			"branch_count_max": 7,
+			"branch_length_min_px": 10,
+			"branch_length_max_px": 18,
+			"branch_zone_min": 0.30,
+			"branch_zone_max": 0.85,
+			"branch_shift_px": 2,
+			"branch_dev_px": 3,
+			"branch_step_h_px": Vector2i(2, 4),
+			"branch_thickness_taper": 1,
+			"leaf_crown_radius_px": 6,
+			"leaf_crown_count_min": 12,
+			"leaf_crown_count_max": 24,
+			"leaf_crown_offset_up_px": 3,
+			"leaf_single_on_branch_chance": 0.40,
+			"leaf_tip_count_min": 2,
+			"leaf_tip_count_max": 3,
+			"leaf_tip_radius_px": 5,
+			"leaf_tip_offset_up_px": 2,
+			"footprint_half_width_cells": 2,
+			"wiggle_prob": 0.28,
+			"max_lateral_px": 12,
+			"require_grass_top": false
+		}
+	}
+]
+
+const SPECIES_PROPERTY_KEYS := [
+	"trunk_total_px_min",
+	"trunk_total_px_max",
+	"trunk_width_px_min",
+	"trunk_width_px_max",
+	"branch_count_min",
+	"branch_count_max",
+	"branch_length_min_px",
+	"branch_length_max_px",
+	"branch_zone_min",
+	"branch_zone_max",
+	"branch_shift_px",
+	"branch_dev_px",
+	"branch_step_h_px",
+	"branch_thickness_taper",
+	"branch_min_width_px",
+	"branch_vertical_overlap_px",
+	"branch_attach_min_px",
+	"max_lateral_px",
+	"wiggle_prob",
+	"wiggle_bias",
+	"leaf_single_on_branch_chance",
+	"leaf_single_offset_radius_px",
+	"leaf_tip_count_min",
+	"leaf_tip_count_max",
+	"leaf_tip_radius_px",
+	"leaf_tip_offset_up_px",
+	"leaf_crown_count_min",
+	"leaf_crown_count_max",
+	"leaf_crown_radius_px",
+	"leaf_crown_offset_up_px",
+	"footprint_half_width_cells",
+	"require_grass_top"
+]
+
+const DEFAULT_SPECIES_ID := "evergreen"
+
 # ─────────────────────────── Internal caches / state ─────────────────────────
 var _atlas_src: TileSetAtlasSource
 var _atlas_tex: Texture2D
+var _atlas_image: Image
+var _bark_outline_cache: Dictionary = {}
 
 # per-tree (mutates as we build each tree)
 var _trunk_total_px: int = 48
 var _trunk_width_px: int = 5
+var _map_cache: Node
+var _base_species_config: Dictionary = {}
+var _current_species_id: String = DEFAULT_SPECIES_ID
+var _cell_class_map: PackedInt32Array = PackedInt32Array()
+var _land_cells: Array[Vector2i] = []
+var _shoreline_land_cells: Array[Vector2i] = []
+var _shoreline_water_cells: Array[Vector2i] = []
+var _water_cells: Array[Vector2i] = []
 
 # helper records
 class GroundSpawn:
-	var position: Vector2
-	var cell: Vector2i
-	var z: int
+	var position: Vector2 = Vector2.ZERO
+	var cell: Vector2i = Vector2i.ZERO
+	var z: int = 0
 
 class Grove:
 	var center_cell: Vector2i
@@ -123,6 +317,8 @@ class Grove:
 func _ready() -> void:
 	if trunks_root == null:
 		trunks_root = self
+	_map_cache = _resolve_map()
+	_cache_base_species_config()
 	_regenerate_forest()
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -130,12 +326,373 @@ func _unhandled_input(e: InputEvent) -> void:
 		match e.keycode:
 			KEY_Y: _regenerate_forest()
 
+func _cache_base_species_config() -> void:
+	if not _base_species_config.is_empty():
+		return
+	for key in SPECIES_PROPERTY_KEYS:
+		_base_species_config[key] = get(key)
+
+func _restore_base_species_config() -> void:
+	if _base_species_config.is_empty():
+		return
+	for key in _base_species_config.keys():
+		set(key, _base_species_config[key])
+
+func _apply_species_overrides(overrides: Dictionary) -> void:
+	if overrides.is_empty():
+		return
+	_restore_base_species_config()
+	for key in overrides.keys():
+		set(key, overrides[key])
+
+func _get_species_by_id(id: String) -> Dictionary:
+	for s in TREE_SPECIES:
+		if s.get("id", "") == id:
+			return s
+	return TREE_SPECIES[0] if TREE_SPECIES.size() > 0 else {}
+
+func _species_footprint_radius(species: Dictionary) -> int:
+	var base_fp: int = footprint_half_width_cells
+	if not _base_species_config.is_empty() and _base_species_config.has("footprint_half_width_cells"):
+		base_fp = int(_base_species_config.get("footprint_half_width_cells", base_fp))
+	var overrides: Dictionary = species.get("overrides", {}) as Dictionary
+	var fp_variant: Variant = overrides.get("footprint_half_width_cells", base_fp)
+	match typeof(fp_variant):
+		TYPE_INT:
+			return max(0, int(fp_variant))
+		TYPE_FLOAT:
+			return max(0, int(round(fp_variant)))
+		_:
+			return max(0, base_fp)
+
+func _has_water_within(cell: Vector2i, radius: int) -> bool:
+	for dy in range(-radius, radius + 1):
+		var ny := clampi(cell.y + dy, 0, H - 1)
+		for dx in range(-radius, radius + 1):
+			var nx := clampi(cell.x + dx, 0, W - 1)
+			if _map_has_water(nx, ny):
+				return true
+	return false
+
+func _has_land_within(cell: Vector2i, radius: int) -> bool:
+	for dy in range(-radius, radius + 1):
+		var ny := clampi(cell.y + dy, 0, H - 1)
+		for dx in range(-radius, radius + 1):
+			var nx := clampi(cell.x + dx, 0, W - 1)
+			if not _map_has_water(nx, ny):
+				if dx == 0 and dy == 0 and _map_has_water(cell.x, cell.y):
+					continue
+				return true
+	return false
+
+func _cell_index(x: int, y: int) -> int:
+	return y * W + x
+
+func _refresh_cell_classes() -> void:
+	var total: int = W * H
+	if total <= 0:
+		_cell_class_map = PackedInt32Array()
+		_land_cells.clear()
+		_shoreline_land_cells.clear()
+		_shoreline_water_cells.clear()
+		_water_cells.clear()
+		return
+
+	if _cell_class_map.size() != total:
+		_cell_class_map.resize(total)
+
+	_land_cells.clear()
+	_shoreline_land_cells.clear()
+	_shoreline_water_cells.clear()
+	_water_cells.clear()
+
+	for y in range(H):
+		for x in range(W):
+			var cell := Vector2i(x, y)
+			var class_id: int
+			if _map_has_water(x, y):
+				class_id = CellClass.WATER
+				if _has_land_within(cell, 1):
+					class_id = CellClass.SHORE_WATER
+			elif _has_water_within(cell, 1):
+				class_id = CellClass.SHORE_LAND
+			else:
+				class_id = CellClass.LAND
+
+			var idx := _cell_index(x, y)
+			if idx >= 0 and idx < _cell_class_map.size():
+				_cell_class_map[idx] = class_id
+
+			match class_id:
+				CellClass.LAND:
+					_land_cells.append(cell)
+				CellClass.SHORE_LAND:
+					_shoreline_land_cells.append(cell)
+				CellClass.SHORE_WATER:
+					_shoreline_water_cells.append(cell)
+				CellClass.WATER:
+					_water_cells.append(cell)
+
+func _cell_class_at(cell: Vector2i) -> int:
+	if cell.x < 0 or cell.x >= W or cell.y < 0 or cell.y >= H:
+		return CellClass.LAND
+	var total: int = _cell_class_map.size()
+	if total != W * H or total == 0:
+		return CellClass.LAND
+	var idx := _cell_index(cell.x, cell.y)
+	if idx < 0 or idx >= total:
+		return CellClass.LAND
+	return int(_cell_class_map[idx])
+
+func _cell_class_is_waterish(class_id: int) -> bool:
+	return class_id == CellClass.WATER or class_id == CellClass.SHORE_WATER
+
+func _cell_class_from_variant(v: Variant) -> int:
+	match typeof(v):
+		TYPE_INT:
+			return clampi(int(v), CellClass.LAND, CellClass.WATER)
+		TYPE_STRING:
+			var key := String(v).to_lower()
+			if CELL_CLASS_NAMES.has(key):
+				return int(CELL_CLASS_NAMES[key])
+	return CellClass.LAND
+
+func _int_from_variant(v: Variant, fallback: int) -> int:
+	match typeof(v):
+		TYPE_INT:
+			return int(v)
+		TYPE_FLOAT:
+			return int(round(float(v)))
+		_:
+			return fallback
+
+func _species_spawn_profile(species: Dictionary) -> Dictionary:
+	var profile_dict := species.get("spawn_profile", {}) as Dictionary
+	var biome: String = species.get("biome", "land") as String
+
+	var allow_water: bool = bool(profile_dict.get("allow_water", biome == "water" or biome == "either"))
+	var require_water: bool = bool(profile_dict.get("require_water", biome == "water"))
+	var prefer_shore: bool = bool(profile_dict.get("prefer_shore", biome == "water"))
+	var avoid_radius: int = _int_from_variant(profile_dict.get("avoid_water_radius", null), -1)
+	var spawn_margin: int = _int_from_variant(profile_dict.get("spawn_margin_cells", null), -1)
+	var micro_attempts_value: int = _int_from_variant(profile_dict.get("micro_attempts", null), micro_spawn_attempts)
+	var slope_allow: int = _int_from_variant(profile_dict.get("slope_allow", null), -1)
+
+	var require_grass_variant: Variant = profile_dict.get("require_grass", null)
+	var require_grass_override: Variant = null
+	if typeof(require_grass_variant) == TYPE_BOOL:
+		require_grass_override = require_grass_variant
+
+	var preferred_classes: Array[int] = []
+	if profile_dict.has("preferred_classes"):
+		var raw_pref: Array = profile_dict.get("preferred_classes") as Array
+		if raw_pref is Array:
+			for cls in raw_pref:
+				preferred_classes.append(_cell_class_from_variant(cls))
+
+	var allowed_classes: Array[int] = []
+	if profile_dict.has("allowed_classes"):
+		var raw_allowed: Array = profile_dict.get("allowed_classes")
+		if raw_allowed is Array:
+			for cls in raw_allowed:
+				allowed_classes.append(_cell_class_from_variant(cls))
+
+	var weight: float = float(profile_dict.get("weight", 1.0))
+
+	return {
+		"allow_water": allow_water,
+		"require_water": require_water,
+		"avoid_water_radius": max(-1, avoid_radius),
+		"spawn_margin": spawn_margin,
+		"micro_attempts": max(1, micro_attempts_value),
+		"slope_allow": slope_allow,
+		"require_grass": require_grass_override,
+		"prefer_shore": prefer_shore,
+		"preferred_classes": preferred_classes,
+		"allowed_classes": allowed_classes,
+		"weight": max(0.01, weight),
+		"shore_only": bool(profile_dict.get("shore_only", false))
+	}
+
+func _class_allowed_for_profile(class_id: int, profile: Dictionary, species_biome: String) -> bool:
+	var allowed_list: Array = profile.get("allowed_classes", [])
+	if allowed_list.size() > 0:
+		return allowed_list.has(class_id)
+
+	match species_biome:
+		"water":
+			return class_id == CellClass.WATER or class_id == CellClass.SHORE_WATER or class_id == CellClass.SHORE_LAND
+		"either":
+			return true
+		_:
+			return class_id == CellClass.LAND or class_id == CellClass.SHORE_LAND
+
+func _species_weight_for_class(class_id: int, profile: Dictionary) -> float:
+	var weight: float = float(profile.get("weight", 1.0))
+	if profile.get("prefer_shore", false) and (class_id == CellClass.SHORE_LAND or class_id == CellClass.SHORE_WATER):
+		weight *= 1.6
+	var preferred: Array = profile.get("preferred_classes", [])
+	if preferred.size() > 0:
+		if preferred.has(class_id):
+			weight *= 1.5
+		else:
+			weight *= 0.8
+	return max(0.01, weight)
+
+func _pick_weighted_candidate(candidates: Array) -> Dictionary:
+	if candidates.size() == 0:
+		return {}
+	var total_weight: float = 0.0
+	for item in candidates:
+		total_weight += float(item.get("weight", 1.0))
+	if total_weight <= 0.0:
+		return candidates[randi_range(0, candidates.size() - 1)]
+	var roll: float = randf() * total_weight
+	for item in candidates:
+		roll -= float(item.get("weight", 1.0))
+		if roll <= 0.0:
+			return item
+	return candidates.back()
+
+func _select_species_for_cell(cell: Vector2i, biome_hint: String = "") -> Dictionary:
+	if TREE_SPECIES.is_empty():
+		return {}
+	var class_id: int = _cell_class_at(cell)
+	var candidates: Array = []
+
+	for species in TREE_SPECIES:
+		var species_biome: String = species.get("biome", "land")
+		if biome_hint != "" and species_biome != biome_hint and species_biome != "either":
+			continue
+
+		var profile: Dictionary = _species_spawn_profile(species)
+		if not _class_allowed_for_profile(class_id, profile, species_biome):
+			continue
+
+		var allow_water: bool = bool(profile.get("allow_water", false))
+		var require_water: bool = bool(profile.get("require_water", false))
+		var shore_only: bool = bool(profile.get("shore_only", false))
+
+		if require_water and not _has_water_within(cell, 3):
+			continue
+		if not allow_water and _cell_class_is_waterish(class_id):
+			continue
+
+		var attempts: int = int(profile.get("micro_attempts", micro_spawn_attempts))
+		var avoid_radius: int = int(profile.get("avoid_water_radius", -1))
+		var footprint_override: int = _species_footprint_radius(species)
+		if avoid_radius < 0:
+			avoid_radius = footprint_override
+
+		var margin_override: int = int(profile.get("spawn_margin", -1))
+		var slope_override: int = int(profile.get("slope_allow", -1))
+		var require_grass_override: Variant = profile.get("require_grass", null)
+
+		var spawn: GroundSpawn = _find_nearby_ground(
+			cell,
+			attempts,
+			allow_water,
+			require_water,
+			max(0, avoid_radius),
+			margin_override,
+			slope_override,
+			require_grass_override,
+			footprint_override,
+			shore_only
+		)
+
+		if spawn == null and require_water:
+			var expanded_allow_water: bool = allow_water and not shore_only
+			spawn = _find_nearby_ground(
+				cell,
+				max(attempts, micro_spawn_attempts) * 2,
+				expanded_allow_water,
+				true,
+				0,
+				margin_override,
+				slope_override,
+				require_grass_override,
+				footprint_override,
+				shore_only
+			)
+
+		if spawn == null and allow_water and not shore_only and avoid_radius > 0:
+			spawn = _find_nearby_ground(
+				cell,
+				attempts,
+				true,
+				require_water,
+				0,
+				margin_override,
+				slope_override,
+				require_grass_override,
+				footprint_override,
+				shore_only
+			)
+
+		if spawn == null:
+			continue
+
+		var weight: float = _species_weight_for_class(class_id, profile)
+		candidates.append({
+			"species": species,
+			"spawn": spawn,
+			"weight": weight
+		})
+
+	if candidates.size() > 0:
+		var pick := _pick_weighted_candidate(candidates)
+		return {
+			"species": pick.get("species", {}),
+			"spawn": pick.get("spawn", null)
+		}
+
+	if biome_hint != "":
+		return {}
+
+	var fallback_species := _get_species_by_id(DEFAULT_SPECIES_ID)
+	var fallback_profile := _species_spawn_profile(fallback_species)
+
+	var fallback_attempts: int = int(fallback_profile.get("micro_attempts", micro_spawn_attempts))
+	var fallback_allow_water: bool = bool(fallback_profile.get("allow_water", false))
+	var fallback_require_water: bool = bool(fallback_profile.get("require_water", false))
+	var fallback_avoid: int = int(fallback_profile.get("avoid_water_radius", -1))
+	var fallback_margin: int = int(fallback_profile.get("spawn_margin", -1))
+	var fallback_slope: int = int(fallback_profile.get("slope_allow", -1))
+	var fallback_require_grass: Variant = fallback_profile.get("require_grass", null)
+	var fallback_shore_only: bool = bool(fallback_profile.get("shore_only", false))
+	var fallback_footprint: int = _species_footprint_radius(fallback_species)
+	if fallback_avoid < 0:
+		fallback_avoid = fallback_footprint
+
+	var fallback_spawn := _find_nearby_ground(
+		cell,
+		fallback_attempts,
+		fallback_allow_water,
+		fallback_require_water,
+		max(0, fallback_avoid),
+		fallback_margin,
+		fallback_slope,
+		fallback_require_grass,
+		fallback_footprint,
+		fallback_shore_only
+	)
+	if fallback_spawn != null:
+		return {"species": fallback_species, "spawn": fallback_spawn}
+	return {}
+
 # ───────────────────────────── Forest regen ───────────────────────────────────
+func regenerate_for_new_slice() -> void:
+	_refresh_cell_classes()
+	_regenerate_forest()
+
 func _regenerate_forest() -> void:
 	# Clear previous baked sprites (and any leftovers)
 	for c in trunks_root.get_children():
 		if c is Sprite2D or c is Node2D:
 			c.queue_free()
+
+	_map_cache = _resolve_map()
 
 	# Resolve atlas
 	if atlas_layer == null or atlas_layer.tile_set == null:
@@ -149,6 +706,15 @@ func _regenerate_forest() -> void:
 	if _atlas_tex == null:
 		push_warning("TreeGen: Atlas source has no texture.")
 		return
+	_atlas_image = _atlas_tex.get_image() if _atlas_tex != null else null
+	if _atlas_image != null and _atlas_image.is_compressed():
+		var err := _atlas_image.decompress()
+		if err != OK:
+			push_warning("TreeGen: failed to decompress atlas image (%s)." % str(err))
+			_atlas_image = null
+	_bark_outline_cache.clear()
+	_restore_base_species_config()
+	_refresh_cell_classes()
 
 	# Plan groves (strict → relaxed)
 	var groves: Array[Grove] = _plan_groves(grove_spacing_cells, slope_max, require_grass_top, max_spawn_attempts)
@@ -158,7 +724,12 @@ func _regenerate_forest() -> void:
 	# Fallback grove
 	if groves.is_empty():
 		push_warning("TreeGen: no grove centers found; placing one at map center.")
-		var gs := _fallback_center_spawn()
+		var fallback_species := _get_species_by_id(DEFAULT_SPECIES_ID)
+		var fallback_radius := _species_footprint_radius(fallback_species)
+		var gs := _fallback_center_spawn(false, false, fallback_radius)
+		if gs == null:
+			push_warning("TreeGen: fallback center spawn unavailable (water or invalid center).")
+			return
 		var g := Grove.new()
 		g.center_cell = gs.cell
 		g.center_world = gs.position
@@ -178,16 +749,72 @@ func _regenerate_forest() -> void:
 			var oy_i: int = int(round(sin(t) * r_cells))
 			var cell := Vector2i(clampi(g.center_cell.x + ox_i, 0, W - 1), clampi(g.center_cell.y + oy_i, 0, H - 1))
 
-			var spawn := _find_nearby_ground(cell, micro_spawn_attempts)
-			if spawn == null:
+			var species_info: Dictionary = _select_species_for_cell(cell)
+			if species_info.is_empty():
 				continue
+			var spawn_variant: Variant = species_info.get("spawn", null)
+			if not (spawn_variant is GroundSpawn):
+				continue
+			var spawn: GroundSpawn = spawn_variant
+			var species := species_info.get("species", {}) as Dictionary
+			_apply_species_overrides(species.get("overrides", {}) as Dictionary)
+			_current_species_id = species.get("id", DEFAULT_SPECIES_ID)
 
 			_trunk_total_px = clampi(randi_range(trunk_total_px_min, trunk_total_px_max), 4, 4096)
 			_trunk_width_px = clampi(randi_range(trunk_width_px_min, trunk_width_px_max), 1, 4096)
 
 			_build_tree_at(spawn, g.bark_region, g.leaf_region)
+			_restore_base_species_config()
+	_restore_base_species_config()
+	_spawn_shoreline_trees()
+	_restore_base_species_config()
 
 # ─────────────────────────── Grove planning helpers ───────────────────────────
+func _spawn_shoreline_trees() -> void:
+	if shoreline_tree_target <= 0:
+		return
+
+	var water_species_available: bool = false
+	for species in TREE_SPECIES:
+		var biome: String = species.get("biome", "land")
+		if biome == "water" or biome == "either":
+			water_species_available = true
+			break
+	if not water_species_available:
+		return
+
+	var pool: Array[Vector2i] = []
+	pool.append_array(_shoreline_land_cells)
+	if pool.is_empty():
+		return
+
+	var want: int = clampi(shoreline_tree_target, 0, pool.size())
+	if want <= 0:
+		return
+
+	var attempts: int = max(shoreline_spawn_attempts, want * 2)
+	var placed: int = 0
+	var tries: int = 0
+	while placed < want and tries < attempts:
+		tries += 1
+		var cell_idx: int = randi_range(0, pool.size() - 1)
+		var cell: Vector2i = pool[cell_idx]
+		var species_info: Dictionary = _select_species_for_cell(cell, "water")
+		if species_info.is_empty():
+			continue
+		var spawn_variant: Variant = species_info.get("spawn", null)
+		if not (spawn_variant is GroundSpawn):
+			continue
+		var spawn: GroundSpawn = spawn_variant
+		var species := species_info.get("species", {}) as Dictionary
+		_apply_species_overrides(species.get("overrides", {}) as Dictionary)
+		_current_species_id = species.get("id", DEFAULT_SPECIES_ID)
+		var bark_region := _choose_bark_region()
+		var leaf_region := _choose_leaf_subtile_region(_choose_one_leaf_tile())
+		_build_tree_at(spawn, bark_region, leaf_region)
+		_restore_base_species_config()
+		placed += 1
+
 func _plan_groves(spacing_cells: int, slope_allow: int, grass_required: bool, attempts: int) -> Array[Grove]:
 	var groves: Array[Grove] = []
 	var want: int = clampi(randi_range(grove_count_min, grove_count_max), 1, 64)
@@ -210,6 +837,8 @@ func _plan_groves(spacing_cells: int, slope_allow: int, grass_required: bool, at
 
 		var z: int = _map_surface_z(x, y)
 		if z < 0:
+			continue
+		if _map_has_water(x, y):
 			continue
 		if grass_required and not _map_is_grassy(x, y, z):
 			continue
@@ -283,26 +912,33 @@ func _choose_leaf_subtile_region(tile_xy: Vector2i) -> Rect2i:
 	)
 
 # ───────────────────────── Map helpers (read-only) ────────────────────────────
-func _get_map() -> Node:
+func _resolve_map() -> Node:
+	if map_ref.is_empty():
+		return null
 	return get_node_or_null(map_ref)
 
-func _map_surface_z(x: int, y: int) -> int:
-	var m := _get_map()
-	if m == null or not m.has_method("surface_z_at"):
-		return -1
-	return int(m.call("surface_z_at", x, y))
+func _get_map() -> Node:
+	if is_instance_valid(_map_cache):
+		return _map_cache
+	_map_cache = _resolve_map()
+	return _map_cache
 
-func _map_is_grassy(_x: int, _y: int, _z: int) -> bool:
-	return true
+func _map_surface_z(x: int, y: int) -> int:
+	return MapUtilsRef.surface_z(_get_map(), x, y)
+
+func _map_is_grassy(x: int, y: int, z: int) -> bool:
+	return MapUtilsRef.is_grass_topped(_get_map(), x, y, z)
+
+func _map_has_water(x: int, y: int) -> bool:
+	return MapUtilsRef.column_has_water(_get_map(), x, y)
 
 func _column_bottom_world(x: int, y: int, z: int) -> Vector2:
-	var m := _get_map()
-	if m != null and m.has_method("_project_iso3d"):
-		return Vector2(m.call("_project_iso3d", float(x), float(y), float(z)))
-	return global_position
+	var map := _get_map()
+	var pos := MapUtilsRef.column_bottom_world(map, x, y, z)
+	return pos if map != null else global_position
 
 static func _sort_key(x: int, y: int, z: int) -> int:
-	return y * 128 + x * 4 + z
+	return MapUtilsRef.sort_key(x, y, z)
 
 func _is_flat_enough(x: int, y: int) -> bool:
 	return _is_flat_enough_custom(x, y, slope_max)
@@ -323,8 +959,17 @@ func _is_flat_enough_custom(x: int, y: int, slope_allow: int) -> bool:
 	var dzy: int = abs(zy1 - zy2)
 	return max(dzx, dzy) <= slope_allow
 
-func _find_nearby_ground(target: Vector2i, tries: int) -> GroundSpawn:
-	var margin: int = clampi(spawn_margin_cells, 0, min(W, H) / 2)
+func _find_nearby_ground(target: Vector2i, tries: int, allow_water: bool = false, require_water: bool = false, avoid_water_radius: int = 0, custom_margin: int = -1, custom_slope_allow: int = -1, require_grass_override: Variant = null, footprint_override: int = -1, shore_only: bool = false) -> GroundSpawn:
+	var base_margin: int = clampi(spawn_margin_cells, 0, min(W, H) / 2)
+	var margin: int = base_margin
+	if custom_margin >= 0:
+		margin = clampi(custom_margin, 0, min(W, H) / 2)
+
+	var slope_allow: int = slope_max if custom_slope_allow < 0 else custom_slope_allow
+	var require_grass_now: bool = require_grass_top
+	if typeof(require_grass_override) == TYPE_BOOL:
+		require_grass_now = bool(require_grass_override)
+
 	for _i in range(tries):
 		var rx: int = randi_range(-2, 2)
 		var ry: int = randi_range(-2, 2)
@@ -333,13 +978,28 @@ func _find_nearby_ground(target: Vector2i, tries: int) -> GroundSpawn:
 		var z: int = _map_surface_z(cx, cy)
 		if z < 0:
 			continue
-		if require_grass_top and not _map_is_grassy(cx, cy, z):
+		var cell_vec := Vector2i(cx, cy)
+		var water_here: bool = _map_has_water(cx, cy)
+		var near_radius: int = max(1, (avoid_water_radius if avoid_water_radius > 0 else 1))
+		if require_water:
+			var has_near_water: bool = water_here or _has_water_within(cell_vec, near_radius)
+			if not has_near_water:
+				continue
+		if shore_only and water_here:
 			continue
-		if not _is_flat_enough(cx, cy):
+		if not allow_water and water_here:
+			continue
+		if not allow_water and avoid_water_radius > 0 and _has_water_within(cell_vec, avoid_water_radius):
+			continue
+		if require_grass_now and not _map_is_grassy(cx, cy, z):
+			continue
+		if not _is_flat_enough_custom(cx, cy, slope_allow):
 			continue
 		var pos: Vector2 = _column_bottom_world(cx, cy, z)
 
 		var halfw: int = max(0, footprint_half_width_cells)
+		if footprint_override >= 0:
+			halfw = max(0, footprint_override)
 		if halfw > 0:
 			var ys: Array[float] = []
 			for dx in range(-halfw, halfw + 1):
@@ -353,18 +1013,29 @@ func _find_nearby_ground(target: Vector2i, tries: int) -> GroundSpawn:
 
 		var gs := GroundSpawn.new()
 		gs.position = pos
-		gs.cell = Vector2i(cx, cy)
+		gs.cell = cell_vec
 		gs.z = z
 		return gs
 	return null
 
-func _fallback_center_spawn() -> GroundSpawn:
-	var cx: int = int(float(W) / 2.0)
-	var cy: int = int(float(H) / 2.0)
-	var z: int = _map_surface_z(cx, cy); if z < 0: z = 0
+func _fallback_center_spawn(allow_water: bool, require_water: bool, avoid_water_radius: int = 0) -> GroundSpawn:
+	var center := Vector2i(int(float(W) / 2.0), int(float(H) / 2.0))
+	var spawn := _find_nearby_ground(center, max_spawn_attempts, allow_water, require_water, avoid_water_radius)
+	if spawn != null:
+		return spawn
+	var water_here := _map_has_water(center.x, center.y)
+	if require_water and not water_here:
+		return null
+	if not allow_water and water_here:
+		return null
+	if not allow_water and avoid_water_radius > 0 and _has_water_within(center, avoid_water_radius):
+		return null
+	var z: int = _map_surface_z(center.x, center.y)
+	if z < 0:
+		return null
 	var gs := GroundSpawn.new()
-	gs.position = _column_bottom_world(cx, cy, z)
-	gs.cell = Vector2i(cx, cy)
+	gs.position = _column_bottom_world(center.x, center.y, z)
+	gs.cell = center
 	gs.z = z
 	return gs
 
@@ -717,18 +1388,18 @@ func _spawn_leaf_clump_connected(temp: Node2D, center_world: Vector2, spawn: Gro
 		_try_connected_leaf(temp, center_world, spawn, leaf_region, radius_px, anchors)
 
 # ────────────────────────────── Outline bake per tree ─────────────────────────
-func _outline_entire_tree(temp: Node2D, spawn: GroundSpawn) -> void:
+func _outline_entire_tree(_temp: Node2D, spawn: GroundSpawn) -> void:
 	# Create a transient factory, bake, parent result under trunks_root, free temp+factory
-	var factory: TreeOutlineFactory = TreeOutlineFactory.new()
-	add_child(factory)
+	# var factory: TreeOutlineFactory = TreeOutlineFactory.new()
+	# add_child(factory)
 
-	var z_final: int = _sort_key(spawn.cell.x, spawn.cell.y, spawn.z + leaves_z_offset + 1)
-	var outlined: Sprite2D = await factory.bake_tree(
-		temp,               # group containing ALL sprites for this tree
-		spawn.position,     # bottom-center anchor in world
-		z_final,            # final z-index
-		trunks_root         # parent for output
-	)
+	var _z_final: int = _sort_key(spawn.cell.x, spawn.cell.y, spawn.z + leaves_z_offset + 1)
+	# var _outlined: Sprite2D = await factory.bake_tree(
+	# 	temp,               # group containing ALL sprites for this tree
+	# 	spawn.position,     # bottom-center anchor in world
+	# 	z_final,            # final z-index
+	# 	trunks_root         # parent for output
+	# )
 
-	factory.queue_free()
+	# factory.queue_free()
 	# temp is freed inside bake_tree()

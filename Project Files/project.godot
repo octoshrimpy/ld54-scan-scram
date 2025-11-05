@@ -15,10 +15,6 @@ run/main_scene="uid://c4lgh5eb3j056"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"
 
-[autoload]
-
-outline="*res://addons/outline/TreeOutlineFactory.gd"
-
 [editor]
 
 version_control/plugin_name="GitPlugin"

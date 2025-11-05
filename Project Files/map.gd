@@ -1,14 +1,22 @@
-# map.gd — 20x20x(Z_MAX+1) cube rendered with per-tile Sprite2D (true elevation)
+# map.gd — 56x56x(Z_MAX+1) cube rendered with per-tile Sprite2D (true elevation)
 # Godot 4.5.1 (TileMapLayer only used as atlas/grid source; hidden)
 # - FIX: Z step is now configurable; default 16 px per layer
 # - Option: position in TileMap grid space (USE_TILEMAP_GRID) or pure iso math
 # - Compact z_index, global Z; no YSort conflicts
 
+class_name PlanetMap
 extends Node2D
+
+const MapUtilsRef := preload("res://utils/map_utils.gd")
+const RedshirtSpawnerScript := preload("res://utils/redshirt_spawner.gd")
 
 # ── Scene refs ────────────────────────────────────────────────────────────────
 @onready var cam: Camera2D = $Camera2D
 @onready var terrain_root: Node = $"terrain"  # only to access TileSet/atlas/grid
+
+@export var trees_path: NodePath
+@export var boulders_path: NodePath
+@export var new_slice_key: Key = KEY_N
 
 var draw_root: Node2D
 var layers: Array[TileMapLayer] = []
@@ -37,9 +45,9 @@ func _get_layer(i: int) -> TileMapLayer:
 	return (layers[i] if i >= 0 and i < layers.size() else null)
 
 # ── cube size (x, y, z) ───────────────────────────────────────────────────────
-const CHUNKS_X: int   = 7
-const CHUNKS_Y: int   = 7
-const SLICE:   int    = 4              # 5*4 = 20
+const CHUNKS_X: int   = 14
+const CHUNKS_Y: int   = 14
+const SLICE:   int    = 4              # 14*4 = 56 cells per axis
 const W: int          = CHUNKS_X * SLICE
 const H: int          = CHUNKS_Y * SLICE
 const Z_MAX: int      = 17             # 18 tall (0..17)
@@ -69,14 +77,34 @@ const CARPET_PERLIN_GAIN: float   = 0.55
 const CARPET_PERLIN_LACUN: float  = 2.0
 const CARPET_PERLIN_THRESH: float = 0.55
 
-# ── Gaussian heightmap over (x,y) → z_surf ────────────────────────────────────
-const HEIGHT_FREQ: float = 0.05
-const HEIGHT_OCTAVES: int      = 3
-const HEIGHT_GAIN: float       = 0.55
-const HEIGHT_LACUN: float      = 2.0
-const HEIGHT_BASELINE_T: float = 0.65
-const HEIGHT_SIGMA: float      = 2.0
-const HEIGHT_GAUSS_CLAMP: float = 2.5
+# ── Fractal heightmap over (x,y) → z_surf ─────────────────────────────────────
+const HEIGHT_MAX_T_CAP: float = 1.5
+
+@export_range(0.001, 0.200, 0.001, "or_greater") var height_freq: float = 0.034
+@export_range(1, 12, 1, "or_greater") var height_octaves: int = 2
+@export_range(0.05, 1.0, 0.01) var height_gain: float = 0.27
+@export_range(1.0, 5.0, 0.05, "or_greater") var height_lacun: float = 2.9
+@export_range(0.5, 8.0, 0.05, "or_greater") var height_detail_freq_mult: float = 1.85
+@export_range(0.0, 1.0, 0.01) var height_detail_weight: float = 0.71
+@export_range(0.0, 1.5, 0.01) var height_min_t: float = 0.0
+@export_range(0.0, 1.5, 0.01) var height_max_t: float = 0.99
+@export_range(0.25, 4.0, 0.05, "or_greater") var height_shape_exp: float = 1.75
+
+# ── Water controls ─────────────────────────────────────────────────────────────
+@export_range(0.0, 1.0, 0.01) var water_spawn_chance: float = 0.35
+@export_range(0.0, 1.0, 0.01) var water_percent_min: float = 0.05
+@export_range(0.0, 1.0, 0.01) var water_percent_max: float = 0.75
+
+const WATER_ALPHA: float = 0.33
+const REED_TILE := Vector2i(23, 17)
+const REED_SPAWN_CHANCE: float = 0.4
+
+# ── Surface detail scatter controls ───────────────────────────────────────────
+const DETAIL_NOISE_FREQ: float = 0.18
+const DETAIL_GRASS_THRESH: float = 0.62
+const DETAIL_DENSE_THRESH: float = 0.82
+const DETAIL_STONE_THRESH: float = 0.22
+const DETAIL_JITTER_PX: float = 3.0
 
 # ── atlas (families/groups) ───────────────────────────────────────────────────
 const FAMILIES := {
@@ -91,12 +119,18 @@ const GROUPS := {
 	"grassy_dirt": {"rel": Vector2i(9,0), "size": Vector2i(1,4)},
 	"grass":       {"rel": Vector2i(0,0), "size": Vector2i(2,4)},
 }
-const FAM_STONE := "gray-brown"
-const FAM_DIRT  := "brown"
-const FAM_GRASS := "emerald"
+const DEFAULT_FAM_STONE := "gray-brown"
+const DEFAULT_FAM_DIRT  := "brown"
+const DEFAULT_FAM_GRASS := "emerald"
 
-# ── water atlas (absolute atlas coords) ───────────────────────────────────────
-const WATER_ATLAS := Vector2i(54, 36)
+const STONE_FAMILY_KEYS: Array[String] = ["gray-brown", "gray-purple", "gray-silver"]
+const DIRT_FAMILY_KEYS: Array[String] = ["brown", "gray-brown", "gray-purple", "gray-silver"]
+const GRASS_FAMILY_KEYS: Array[String] = ["red", "orange", "emerald", "teal", "blue", "violet"]
+const DEFAULT_BOULDER_TILE_MIN := Vector2i(55, 65)
+const DEFAULT_BOULDER_TILE_MAX := Vector2i(57, 68)
+const BOULDER_TILE_OFFSET_MIN := DEFAULT_BOULDER_TILE_MIN - FAMILIES[DEFAULT_FAM_STONE]
+const BOULDER_TILE_OFFSET_MAX := DEFAULT_BOULDER_TILE_MAX - FAMILIES[DEFAULT_FAM_STONE]
+const REDSHIRT_SORT_BIAS: int = 64
 
 # ── noise fields ──────────────────────────────────────────────────────────────
 var top_noise: FastNoiseLite     = FastNoiseLite.new()
@@ -104,7 +138,18 @@ var carpet_noise: FastNoiseLite  = FastNoiseLite.new()
 var grad_noise: FastNoiseLite    = FastNoiseLite.new()
 var height_u1: FastNoiseLite     = FastNoiseLite.new()
 var height_u2: FastNoiseLite     = FastNoiseLite.new()
+var detail_noise: FastNoiseLite  = FastNoiseLite.new()
 var rng_seed: int = 0
+var _water_active: bool = false
+var _water_level: int = -1
+var _water_columns: Array = []
+var _stone_family_key: String = DEFAULT_FAM_STONE
+var _dirt_family_key: String = DEFAULT_FAM_DIRT
+var _grass_family_key: String = DEFAULT_FAM_GRASS
+var _trees_cache: TreeGen
+var _boulders_cache: BoulderGen
+var _redshirt_spawner = RedshirtSpawnerScript.new()
+var _camera_centered_by_spawn: bool = false
 
 # ── cached atlas source / metrics ─────────────────────────────────────────────
 var _atlas_src: TileSetAtlasSource
@@ -157,20 +202,22 @@ func _hide_tilemap_layers() -> void:
 			tm.clear()
 
 # ── projection & sort helpers ─────────────────────────────────────────────────
-static func _sort_key(x: int, y: int, z: int) -> int:
-	# y dominates, then x, then z (higher z draws last/on top)
-	return y * 128 + x * 4 + z
+static func sort_key(x: int, y: int, z: int) -> int:
+	return MapUtilsRef.sort_key(x, y, z)
 
-func _project_iso3d(x: float, y: float, z: float) -> Vector2:
+func project_iso3d(x: float, y: float, z: float) -> Vector2:
 	if USE_TILEMAP_GRID and _base_tm != null:
 		# Use TileMap grid; map_to_local returns the cell's draw origin.
-		var cell_pos := _base_tm.map_to_local(Vector2i(x, y))
+		var cell_pos: Vector2 = _base_tm.map_to_local(Vector2i(int(x), int(y)))
 		return cell_pos - Vector2(0, float(Z_STEP_PX) * z)
 	else:
 		# Pure diamond iso math based on tile size
 		var sx := (x - y) * (_tile_w * 0.5)
 		var sy := (x + y) * (_tile_h * 0.5) - z * float(Z_STEP_PX)
 		return Vector2(sx, sy)
+
+func _project_iso3d(x: float, y: float, z: float) -> Vector2:
+	return project_iso3d(x, y, z)
 
 func _place_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, tint: Color = Color(1,1,1,1)) -> void:
 	if _atlas_src == null or _atlas_tex == null:
@@ -183,7 +230,7 @@ func _place_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, tint: Color = Col
 	sp.region_enabled = true
 	sp.region_rect = Rect2(region.position, region.size)
 
-	var p := _project_iso3d(float(x), float(y), float(z))
+	var p := project_iso3d(float(x), float(y), float(z))
 
 	# Anchor so the diamond sits correctly; TileMap grid origin matches this offset.
 	# (If your atlas differs, tweak these two numbers.)
@@ -191,34 +238,121 @@ func _place_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, tint: Color = Col
 	sp.position = p - anchor
 	sp.centered = false
 	sp.z_as_relative = false
-	sp.z_index = _sort_key(x, y, z)
+	sp.z_index = sort_key(x, y, z)
 	sp.modulate = tint
+	draw_root.add_child(sp)
+
+func _place_detail_sprite(
+	atlas_xy: Vector2i,
+	x: int,
+	y: int,
+	z: int,
+	offset: Vector2 = Vector2.ZERO,
+	scale_vec: Vector2 = Vector2.ONE,
+	rotation_radians: float = 0.0,
+	tint: Color = Color(1,1,1,1)
+  ) -> void:
+	if _atlas_src == null or _atlas_tex == null:
+		return
+	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
+	if region.size == Vector2i.ZERO:
+		return
+	var sp := Sprite2D.new()
+	sp.texture = _atlas_tex
+	sp.region_enabled = true
+	sp.region_rect = Rect2(region.position, region.size)
+	var p := project_iso3d(float(x), float(y), float(z))
+	var anchor := Vector2(_tile_w * 0.5, _tile_h)
+	sp.position = p - anchor + offset
+	sp.centered = false
+	sp.z_as_relative = false
+	sp.z_index = sort_key(x, y, z)
+	sp.modulate = tint
+	sp.scale = scale_vec
+	sp.rotation = rotation_radians
 	draw_root.add_child(sp)
 
 # ── atlas helpers → atlas coords ──────────────────────────────────────────────
 func _family_base(fam: String) -> Vector2i:
 	return (FAMILIES.get(fam, FAMILIES["teal"]) as Vector2i)
 
+func _pick_family(options: Array[String], current: String, ensure_new: bool) -> String:
+	if options.is_empty():
+		return current
+	if options.size() == 1:
+		return options[0]
+	var max_attempts: int = max(1, options.size() * 3)
+	for _i in range(max_attempts):
+		var candidate: String = options[randi_range(0, options.size() - 1)]
+		if not ensure_new or candidate != current:
+			return candidate
+	return options[randi_range(0, options.size() - 1)]
+
+func _randomize_palette(ensure_new: bool = true) -> bool:
+	var new_stone: String = _pick_family(STONE_FAMILY_KEYS, _stone_family_key, ensure_new)
+	var new_dirt: String = _pick_family(DIRT_FAMILY_KEYS, _dirt_family_key, ensure_new)
+	var new_grass: String = _pick_family(GRASS_FAMILY_KEYS, _grass_family_key, ensure_new)
+
+	var changed := (new_stone != _stone_family_key) or (new_dirt != _dirt_family_key) or (new_grass != _grass_family_key)
+
+	_stone_family_key = new_stone
+	_dirt_family_key = new_dirt
+	_grass_family_key = new_grass
+	return changed
+
+func _apply_palette_to_boulders() -> void:
+	var b := _get_boulder_gen()
+	if b == null:
+		return
+	var base: Vector2i = _family_base(_stone_family_key)
+	var min_corner: Vector2i = base + BOULDER_TILE_OFFSET_MIN
+	var max_corner: Vector2i = base + BOULDER_TILE_OFFSET_MAX
+	b.set_tile_region(min_corner, max_corner)
+
+func _get_tree_gen() -> TreeGen:
+	if _trees_cache != null and is_instance_valid(_trees_cache):
+		return _trees_cache
+	if trees_path.is_empty():
+		return null
+	_trees_cache = get_node_or_null(trees_path) as TreeGen
+	return _trees_cache
+
+func _get_boulder_gen() -> BoulderGen:
+	if _boulders_cache != null and is_instance_valid(_boulders_cache):
+		return _boulders_cache
+	if boulders_path.is_empty():
+		return null
+	_boulders_cache = get_node_or_null(boulders_path) as BoulderGen
+	return _boulders_cache
+
 func _stone_atlas() -> Vector2i:
 	var rel: Vector2i = GROUPS["stone"]["rel"]
-	return _family_base(FAM_STONE) + rel + Vector2i(0, 1)
+	return _family_base(_stone_family_key) + rel + Vector2i(0, 1)
 
 func _dirt_atlas() -> Vector2i:
 	var rel: Vector2i = GROUPS["dirt"]["rel"]
 	var size: Vector2i = GROUPS["dirt"]["size"]
-	return _family_base(FAM_DIRT) + Vector2i(rel.x + size.x - 1, rel.y + 1)
+	return _family_base(_dirt_family_key) + Vector2i(rel.x + size.x - 1, rel.y + 1)
 
 func _grassy_dirt_atlas() -> Vector2i:
 	var rel: Vector2i = GROUPS["grassy_dirt"]["rel"]
-	return _family_base(FAM_GRASS) + rel + Vector2i(0, 1)
+	return _family_base(_grass_family_key) + rel + Vector2i(0, 1)
 
 func _grass_blade_atlas() -> Vector2i:
 	var rel: Vector2i = GROUPS["grass"]["rel"]
 	var size: Vector2i = GROUPS["grass"]["size"]
-	return _family_base(FAM_GRASS) + rel + Vector2i(randi_range(0, size.x - 1), 3)
+	return _family_base(_grass_family_key) + rel + Vector2i(randi_range(0, size.x - 1), 3)
 
-func _water_atlas() -> Vector2i:
-	return WATER_ATLAS
+func _stone_pebble_atlas() -> Vector2i:
+	var rel: Vector2i = GROUPS["stone"]["rel"]
+	var size: Vector2i = GROUPS["stone"]["size"]
+	return _family_base(_stone_family_key) + rel + Vector2i(randi_range(0, size.x - 1), 0)
+
+func _water_surface_atlas() -> Vector2i:
+	return Vector2i(54, 34)
+
+func _water_depth_atlas() -> Vector2i:
+	return Vector2i(72, 35)
 
 # ── noises setup ──────────────────────────────────────────────────────────────
 func _setup_noises() -> void:
@@ -240,27 +374,145 @@ func _setup_noises() -> void:
 	grad_noise.fractal_gain       = 0.5
 	grad_noise.fractal_lacunarity = 2.0
 
+	detail_noise.noise_type         = FastNoiseLite.TYPE_PERLIN
+	detail_noise.frequency          = DETAIL_NOISE_FREQ
+	detail_noise.fractal_octaves    = 2
+	detail_noise.fractal_gain       = 0.5
+	detail_noise.fractal_lacunarity = 2.0
+
 	for n in [height_u1, height_u2]:
 		n.noise_type         = FastNoiseLite.TYPE_PERLIN
-		n.frequency          = HEIGHT_FREQ
-		n.fractal_octaves    = HEIGHT_OCTAVES
-		n.fractal_gain       = HEIGHT_GAIN
-		n.fractal_lacunarity = HEIGHT_LACUN
+		n.frequency          = 1.0
+		n.fractal_type       = FastNoiseLite.FRACTAL_NONE
+		n.fractal_octaves    = 1
+		n.fractal_gain       = 1.0
+		n.fractal_lacunarity = 2.0
 
 # ── height helpers ────────────────────────────────────────────────────────────
 func surface_z_at(x: int, y: int) -> int:
 	return _surface_z_at(x, y)
 
+func _fbm_height(noise: FastNoiseLite, x: float, y: float, base_freq: float) -> float:
+	var freq := base_freq
+	var amplitude := 1.0
+	var total := 0.0
+	var norm := 0.0
+	var octave_count: int = max(1, height_octaves)
+	for _i in range(octave_count):
+		total += noise.get_noise_2d(x * freq, y * freq) * amplitude
+		norm += amplitude
+		freq *= height_lacun
+		amplitude *= height_gain
+	return (total / norm) if norm > 0.0 else 0.0
+
 func _surface_z_at(x: int, y: int) -> int:
-	var u1: float = 0.5 + 0.5 * height_u1.get_noise_2d(float(x), float(y))
-	var u2: float = 0.5 + 0.5 * height_u2.get_noise_2d(float(x), float(y))
-	u1 = clampf(u1, 1e-6, 1.0 - 1e-6)
-	u2 = clampf(u2, 1e-6, 1.0 - 1e-6)
-	var g: float = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2) # ~N(0,1)
-	g = clampf(g, -HEIGHT_GAUSS_CLAMP, HEIGHT_GAUSS_CLAMP)
-	var baseline: float = clampf(HEIGHT_BASELINE_T * float(Z_MAX), 0.0, float(Z_MAX))
-	var zf: float = baseline + g * HEIGHT_SIGMA
+	var xf := float(x)
+	var yf := float(y)
+	var base := _fbm_height(height_u1, xf, yf, height_freq)
+	var detail := _fbm_height(height_u2, xf, yf, height_freq * height_detail_freq_mult)
+	var combined := lerpf(base, detail, clampf(height_detail_weight, 0.0, 1.0))
+	var normalized := clampf(0.5 + 0.5 * combined, 0.0, 1.0)
+	normalized = pow(normalized, height_shape_exp)
+	var min_t := clampf(height_min_t, 0.0, HEIGHT_MAX_T_CAP)
+	var max_t := clampf(height_max_t, min_t + 1e-5, HEIGHT_MAX_T_CAP)
+	var zf: float = lerpf(min_t * float(Z_MAX), max_t * float(Z_MAX), normalized)
 	return clampi(int(round(zf)), 0, Z_MAX)
+
+func is_water_column(x: int, y: int) -> bool:
+	if not _water_active:
+		return false
+	if y < 0 or y >= _water_columns.size():
+		return false
+	var row: Array = _water_columns[y]
+	if x < 0 or x >= row.size():
+		return false
+	return bool(row[x])
+
+func is_grass_topped(x: int, y: int, z: int) -> bool:
+	if z != _surface_z_at(x, y):
+		return false
+	if is_water_column(x, y):
+		return false
+	var n_grass: float = 0.5 + 0.5 * top_noise.get_noise_2d(float(x), float(y))
+	return n_grass > TOP_PERLIN_THRESH
+
+func _detail_offset(x: int, y: int, weight: float) -> Vector2:
+	var jitter_u := detail_noise.get_noise_3d(float(x), float(y), 17.0)
+	var jitter_v := detail_noise.get_noise_3d(float(x), float(y), -41.0)
+	var scale_factor: float = DETAIL_JITTER_PX * clampf(0.25 + weight * 0.75, 0.0, 1.0)
+	return Vector2(jitter_u, jitter_v) * scale_factor
+
+func _spawn_surface_detail(x: int, y: int, z_surf: int) -> void:
+	if is_water_column(x, y) or z_surf < SEA_Z:
+		return
+	var n := 0.5 + 0.5 * detail_noise.get_noise_2d(float(x), float(y))
+	if n > DETAIL_GRASS_THRESH and z_surf + 1 <= Z_MAX:
+		var weight := clampf((n - DETAIL_GRASS_THRESH) / max(0.001, 1.0 - DETAIL_GRASS_THRESH), 0.0, 1.0)
+		var offset := _detail_offset(x, y, weight)
+		var scale_f := lerpf(0.85, 1.2, weight)
+		var tint := Color(1.0, lerpf(0.9, 1.0, weight), 1.0, 0.9 + 0.1 * weight)
+		var z_top: int = min(z_surf + 1, Z_MAX)
+		_place_detail_sprite(_grass_blade_atlas(), x, y, z_top, offset, Vector2(scale_f, scale_f), 0.05 * (weight - 0.5), tint)
+		if n > DETAIL_DENSE_THRESH:
+			var weight2 := clampf((n - DETAIL_DENSE_THRESH) / max(0.001, 1.0 - DETAIL_DENSE_THRESH), 0.0, 1.0)
+			var offset2 := _detail_offset(x + 37, y + 19, weight2) * 0.5
+			var scale_f2 := lerpf(0.7, 1.0, weight2)
+			_place_detail_sprite(_grass_blade_atlas(), x, y, z_top, offset2, Vector2(scale_f2, scale_f2), -0.05 * (weight2 - 0.5), tint)
+	elif n < DETAIL_STONE_THRESH:
+		var weight_stone := clampf((DETAIL_STONE_THRESH - n) / max(0.001, DETAIL_STONE_THRESH), 0.0, 1.0)
+		var offset_stone := _detail_offset(x + 11, y + 53, weight_stone) * 0.6
+		var scale_s := lerpf(0.6, 0.95, weight_stone)
+		var tint_s := Color(lerpf(0.8, 1.0, weight_stone), lerpf(0.8, 0.95, weight_stone), lerpf(0.8, 0.9, weight_stone), 0.85 + 0.15 * weight_stone)
+		_place_detail_sprite(_stone_pebble_atlas(), x, y, z_surf, offset_stone, Vector2(scale_s, scale_s), 0.0, tint_s)
+
+func get_height_settings() -> Dictionary:
+	return {
+		"height_freq": height_freq,
+		"height_octaves": height_octaves,
+		"height_gain": height_gain,
+		"height_lacun": height_lacun,
+		"height_detail_freq_mult": height_detail_freq_mult,
+		"height_detail_weight": height_detail_weight,
+		"height_min_t": height_min_t,
+		"height_max_t": height_max_t,
+		"height_shape_exp": height_shape_exp,
+	}
+
+func apply_height_settings(settings: Dictionary, reseed: bool = false) -> void:
+	if settings.has("height_freq"):
+		height_freq = max(0.001, float(settings["height_freq"]))
+	if settings.has("height_octaves"):
+		height_octaves = max(1, int(settings["height_octaves"]))
+	if settings.has("height_gain"):
+		height_gain = clampf(float(settings["height_gain"]), 0.01, 1.0)
+	if settings.has("height_lacun"):
+		height_lacun = max(0.5, float(settings["height_lacun"]))
+	if settings.has("height_detail_freq_mult"):
+		height_detail_freq_mult = max(0.1, float(settings["height_detail_freq_mult"]))
+	if settings.has("height_detail_weight"):
+		height_detail_weight = clampf(float(settings["height_detail_weight"]), 0.0, 1.0)
+	if settings.has("height_min_t"):
+		height_min_t = clampf(float(settings["height_min_t"]), 0.0, HEIGHT_MAX_T_CAP - 0.01)
+	if settings.has("height_max_t"):
+		height_max_t = clampf(float(settings["height_max_t"]), 0.01, HEIGHT_MAX_T_CAP)
+	if settings.has("height_shape_exp"):
+		height_shape_exp = max(0.01, float(settings["height_shape_exp"]))
+	_normalize_height_bounds()
+	rebuild_world(reseed)
+
+func rebuild_world(reseed: bool = false) -> void:
+	var chosen_seed: int = (-1 if reseed else rng_seed)
+	_rebuild(chosen_seed)
+
+func _normalize_height_bounds() -> void:
+	height_min_t = clampf(height_min_t, 0.0, HEIGHT_MAX_T_CAP - 0.01)
+	height_max_t = clampf(height_max_t, height_min_t + 0.01, HEIGHT_MAX_T_CAP)
+
+func get_dimensions() -> Vector2i:
+	return Vector2i(W, H)
+
+func get_max_elevation() -> int:
+	return Z_MAX
 
 # ── rebuild ───────────────────────────────────────────────────────────────────
 func _clear_drawables() -> void:
@@ -273,19 +525,22 @@ func _center_camera_on_middle() -> void:
 	var cx := W >> 1
 	var cy := H >> 1
 	var cz := surface_z_at(cx, cy)
-	var p := _project_iso3d(cx, cy, cz)
+	var p := project_iso3d(cx, cy, cz)
 	cam.global_position = p
 
 func _rebuild(new_seed: int = -1) -> void:
 	_clear_drawables()
+	_camera_centered_by_spawn = false
 	rng_seed = (new_seed if new_seed != -1 else randi())
 	top_noise.seed     = rng_seed ^ 0xABCDEF01
 	carpet_noise.seed  = rng_seed ^ 0xBADC0DED
 	grad_noise.seed    = rng_seed ^ 0x13579BDF
 	height_u1.seed     = rng_seed ^ 0x0F0F0F0F
 	height_u2.seed     = rng_seed ^ 0xF00DFACE
+	detail_noise.seed  = rng_seed ^ 0x2468ACE1
 	_spawn_cube_terrain()
-	_center_camera_on_middle()
+	if not _camera_centered_by_spawn:
+		_center_camera_on_middle()
 
 # ── main build (per-column surface, fill below, water where air≤sea) ──────────
 const SEA_Z := 0
@@ -294,20 +549,70 @@ func _spawn_cube_terrain() -> void:
 	var atlas_stone := _stone_atlas()
 	var atlas_dirt  := _dirt_atlas()
 	var atlas_grass := _grassy_dirt_atlas()
-	var atlas_water := _water_atlas()
+	var atlas_water_surface := _water_surface_atlas()
+	var atlas_water_depth := _water_depth_atlas()
+	var water_tint := Color(1.0, 1.0, 1.0, WATER_ALPHA)
 
+	_water_columns.clear()
+	for _y in range(H):
+		var row: Array = []
+		row.resize(W)
+		for i in range(W):
+			row[i] = false
+		_water_columns.append(row)
+
+	var surfaces: Array = []
+	var grass_mask: Array = []
+	var min_grass: int = Z_MAX
+	var max_grass: int = 0
+	var grass_found := false
 	for y in range(H):
+		var row_surf: Array = []
+		var row_grass: Array = []
 		for x in range(W):
 			var z_surf: int = _surface_z_at(x, y)
-
-			# Water where air ≤ sea
-			for z in range(0, SEA_Z + 1):
-				if z > z_surf:
-					_place_sprite(atlas_water, x, y, z)
-
-			# Top cell
+			row_surf.append(z_surf)
 			var n_grass: float = 0.5 + 0.5 * top_noise.get_noise_2d(float(x), float(y))
-			if n_grass > TOP_PERLIN_THRESH:
+			var is_grass := n_grass > TOP_PERLIN_THRESH
+			row_grass.append(is_grass)
+			if is_grass:
+				grass_found = true
+				min_grass = min(min_grass, z_surf)
+				max_grass = max(max_grass, z_surf)
+		surfaces.append(row_surf)
+		grass_mask.append(row_grass)
+
+	var min_percent: float = min(water_percent_min, water_percent_max)
+	var max_percent: float = max(water_percent_min, water_percent_max)
+	min_percent = clampf(min_percent, 0.0, 1.0)
+	max_percent = clampf(max_percent, 0.0, 1.0)
+
+	_water_active = false
+	_water_level = -1
+	if grass_found and max_percent > 0.0 and randf() < clampf(water_spawn_chance, 0.0, 1.0):
+		var span: int = max_grass - min_grass
+		var percent: float = (max_percent if is_equal_approx(min_percent, max_percent) else randf_range(min_percent, max_percent))
+		var level_f := float(min_grass) + float(span) * percent
+		_water_level = clampi(int(round(level_f)), 0, Z_MAX)
+		_water_active = _water_level >= 0
+
+	for y in range(H):
+		var row_surf: Array = surfaces[y]
+		var row_grass: Array = grass_mask[y]
+		var water_row: Array = _water_columns[y]
+		for x in range(W):
+			var z_surf: int = row_surf[x]
+			var column_has_water := false
+			if _water_active:
+				var water_cap: int = min(_water_level, Z_MAX)
+				for z in range(0, water_cap + 1):
+					if z > z_surf:
+						var atlas_xy := (atlas_water_surface if z == water_cap else atlas_water_depth)
+						_place_sprite(atlas_xy, x, y, z, water_tint)
+						column_has_water = true
+			water_row[x] = column_has_water
+			var has_grass_top := bool(row_grass[x]) and not column_has_water
+			if has_grass_top:
 				_place_sprite(atlas_grass, x, y, z_surf)
 				var n_carpet: float = 0.5 + 0.5 * carpet_noise.get_noise_2d(float(x), float(y))
 				if n_carpet > CARPET_PERLIN_THRESH and z_surf + 1 <= Z_MAX:
@@ -315,11 +620,9 @@ func _spawn_cube_terrain() -> void:
 			else:
 				_place_sprite(atlas_dirt, x, y, z_surf)
 
-			# Dirt cap
 			for z in range(max(0, z_surf - DIRT_CAP_LAYERS), z_surf):
 				_place_sprite(atlas_dirt, x, y, z)
 
-			# Gradient region 0..below cap
 			var grad_top: int = max(0, z_surf - DIRT_CAP_LAYERS - 1)
 			for z in range(0, grad_top + 1):
 				var base_p: float = float(z) / float(max(1, grad_top)) + GRADIENT_BIAS
@@ -328,17 +631,121 @@ func _spawn_cube_terrain() -> void:
 				var atlas := (atlas_dirt if randf() < p_dirt else atlas_stone)
 				_place_sprite(atlas, x, y, z)
 
+			_spawn_surface_detail(x, y, z_surf)
 			_coastline_rim(x, y, z_surf)
+		_water_columns[y] = water_row
+
+	_spawn_shore_reeds(surfaces)
+	_spawn_redshirts(surfaces)
+
+func _spawn_shore_reeds(surfaces: Array) -> void:
+	if not _water_active:
+		return
+	var atlas_reed := REED_TILE
+	for y in range(H):
+		for x in range(W):
+			if is_water_column(x, y):
+				continue
+			if not _adjacent_to_water(x, y):
+				continue
+			if randf() > REED_SPAWN_CHANCE:
+				continue
+			var z_surf: int = (surfaces[y][x] as int)
+			if z_surf + 1 <= Z_MAX:
+				_place_sprite(atlas_reed, x, y, z_surf + 1)
+
+func _adjacent_to_water(x: int, y: int) -> bool:
+	var offsets := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for off in offsets:
+		var nx: int = x + off.x
+		var ny: int = y + off.y
+		if nx < 0 or nx >= W or ny < 0 or ny >= H:
+			continue
+		if is_water_column(nx, ny):
+			return true
+	return false
+
+func _spawn_redshirts(surfaces: Array) -> void:
+	if _redshirt_spawner == null:
+		return
+	var placements = _redshirt_spawner.spawn_redshirts(
+		Callable(),
+		Callable(self, "is_water_column"),
+		surfaces,
+		W,
+		H,
+		Z_MAX
+	)
+	if placements.is_empty():
+		return
+	var positions: Array[Vector2i] = []
+	for placement_variant in placements:
+		if typeof(placement_variant) != TYPE_DICTIONARY:
+			continue
+		var placement: Dictionary = placement_variant
+		var atlas_xy: Vector2i = placement.get("atlas", Vector2i.ZERO)
+		var pos: Vector2i = placement.get("pos", Vector2i.ZERO)
+		var z_top: int = int(placement.get("z_top", 0))
+		var flip_h: bool = bool(placement.get("flip_h", false))
+		_place_redshirt_sprite(atlas_xy, pos.x, pos.y, z_top, flip_h)
+		positions.append(pos)
+	if positions.is_empty():
+		return
+	_focus_camera_on_cells(positions, surfaces)
+
+func _place_redshirt_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, flip_h: bool) -> void:
+	if _atlas_src == null or _atlas_tex == null:
+		return
+	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
+	if region.size == Vector2i.ZERO:
+		return
+	var sp := Sprite2D.new()
+	sp.texture = _atlas_tex
+	sp.region_enabled = true
+	sp.region_rect = Rect2(region.position, region.size)
+	var p := project_iso3d(float(x), float(y), float(z))
+	var anchor := Vector2(_tile_w * 0.5, _tile_h)
+	sp.position = p - anchor
+	sp.centered = false
+	sp.z_as_relative = false
+	var depth := MapUtilsRef.sort_key(x, y, z)
+	depth = clampi(depth + REDSHIRT_SORT_BIAS, RenderingServer.CANVAS_ITEM_Z_MIN, RenderingServer.CANVAS_ITEM_Z_MAX)
+	sp.z_index = depth
+	sp.flip_h = flip_h
+	draw_root.add_child(sp)
+
+func _focus_camera_on_cells(cells: Array[Vector2i], surfaces: Array) -> void:
+	if cam == null or cells.is_empty():
+		return
+	var accum: Vector2 = Vector2.ZERO
+	var count: int = 0
+	for cell_variant in cells:
+		var pos: Vector2i = cell_variant
+		if pos.y < 0 or pos.y >= surfaces.size():
+			continue
+		var row: Array = surfaces[pos.y]
+		if pos.x < 0 or pos.x >= row.size():
+			continue
+		var z_surf := int(row[pos.x])
+		var z_top : int = min(z_surf + 1, Z_MAX)
+		accum += project_iso3d(float(pos.x), float(pos.y), float(z_top))
+		count += 1
+	if count <= 0:
+		return
+	cam.global_position = accum / float(count)
+	_camera_centered_by_spawn = true
 
 # Thin rim highlight on coasts
 func _coastline_rim(x: int, y: int, z_surf: int) -> void:
-	if z_surf < SEA_Z:
+	if not _water_active:
+		return
+	if is_water_column(x, y):
 		return
 	var n_water := false
-	if x > 0 and surface_z_at(x - 1, y) < SEA_Z: n_water = true
-	if x < W - 1 and surface_z_at(x + 1, y) < SEA_Z: n_water = true
-	if y > 0 and surface_z_at(x, y - 1) < SEA_Z: n_water = true
-	if y < H - 1 and surface_z_at(x, y + 1) < SEA_Z: n_water = true
+	if x > 0 and is_water_column(x - 1, y): n_water = true
+	if x < W - 1 and is_water_column(x + 1, y): n_water = true
+	if y > 0 and is_water_column(x, y - 1): n_water = true
+	if y < H - 1 and is_water_column(x, y + 1): n_water = true
 	if not n_water:
 		return
 
@@ -354,17 +761,35 @@ func _coastline_rim(x: int, y: int, z_surf: int) -> void:
 	sp.region_rect = Rect2(region.position, region.size)
 	sp.scale = Vector2(1.0, 0.06)
 	sp.modulate = Color(1.0, 1.0, 0.85, 0.85)
-	var p := _project_iso3d(float(x), float(y), float(z_surf))
+	var p := project_iso3d(float(x), float(y), float(z_surf))
 	var anchor := Vector2(_tile_w * 0.5, _tile_h)
 	sp.position = p - Vector2(anchor.x, anchor.y * 0.75)  # sit slightly above top face
 	sp.centered = false
 	sp.z_as_relative = false
-	sp.z_index = _sort_key(x, y, max(z_surf, SEA_Z))
+	sp.z_index = sort_key(x, y, max(z_surf, SEA_Z))
 	draw_root.add_child(sp)
+
+func _regenerate_object_layers(reseed_boulders: bool) -> void:
+	var trees: TreeGen = _get_tree_gen()
+	if trees != null:
+		trees.regenerate_for_new_slice()
+	var boulders: BoulderGen = _get_boulder_gen()
+	if boulders != null:
+		boulders.regenerate_boulders(reseed_boulders)
+
+func new_slice() -> void:
+	randomize()
+	_randomize_palette(true)
+	_apply_palette_to_boulders()
+	_rebuild(randi())
+	_regenerate_object_layers(true)
 
 # ── Input (R = rebuild) ───────────────────────────────────────────────────────
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and not e.echo:
-		match e.keycode:
-			KEY_R:
-				_rebuild()
+		var has_modifier: bool = e.shift_pressed or e.alt_pressed or e.ctrl_pressed or e.meta_pressed
+		if new_slice_key != KEY_NONE and e.keycode == new_slice_key and not has_modifier:
+			new_slice()
+			return
+		if e.keycode == KEY_R and not has_modifier:
+			_rebuild()
