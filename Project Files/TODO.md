@@ -25,11 +25,11 @@
 - [ ] Perform balancing, optimization, and QA for the full mission loop.
 
 ## Tech Debt – Redshirts & Map Sync
-- [ ] Refresh `RedshirtAgent` map bounds (and pause wandering) whenever the planet node rebuilds so `_map_dims` and `_map_ref` never go stale.
-- [ ] Cache iso projections/height samples inside `_build_hop_segments()` to avoid repeated `MapUtils` queries per hop segment.
-- [ ] Rework `RedshirtSpawner` to avoid scanning every tile each spawn; cache land cells or short-circuit once enough dry cells are gathered.
-- [ ] Detect planet refreshes, despawn existing redshirts, and respawn them once the new terrain is ready.
-- [ ] Add a Star Trek–style beam-down effect at the spawn epicenter when new redshirts materialize.
+- [x] Refresh `RedshirtAgent` map bounds (and pause wandering) whenever the planet node rebuilds so `_map_dims` and `_map_ref` never go stale.
+- [x] Cache iso projections/height samples inside `_build_hop_segments()` to avoid repeated `MapUtils` queries per hop segment.
+- [x] Rework `RedshirtSpawner` to avoid scanning every tile each spawn; cache land cells or short-circuit once enough dry cells are gathered.
+- [x] Detect planet refreshes, despawn existing redshirts, and respawn them once the new terrain is ready.
+- [x] Add a Star Trek–style beam-down effect at the spawn epicenter when new redshirts materialize.
 
 ## Tech Debt – Rendering & Dressing
 - [ ] Finish `TreeGen._outline_entire_tree()` in `trees.gd` so groves bake to a single outlined sprite per tree and builder nodes are freed even when `trunks_root` is a separate node; right now the stub leaves dozens of Sprite2D children per tree and skips the intended outline pass.
@@ -38,4 +38,4 @@
 
 ## Tech Debt – Navigation & Controls
 - [ ] Have `PlanetMap` emit a `map_rebuilt` signal and let `NavigationGrid` / `PathfindingAgent` listen so cached walkability masks and path targets rebuild automatically instead of pathing on stale grids after a new slice.
-- [ ] Implement a proper iso-to-grid `world_to_cell()` helper (either on `PlanetMap` or `NavigationGrid`) so `PathfindingAgent.world_to_cell()` stops brute-forcing every cell in the region on each call (`utils/pathfinding_agent.gd`).
+- [x] Implement a proper iso-to-grid `world_to_cell()` helper (either on `PlanetMap` or `NavigationGrid`) so `PathfindingAgent.world_to_cell()` stops brute-forcing every cell in the region on each call (`utils/pathfinding_agent.gd`).

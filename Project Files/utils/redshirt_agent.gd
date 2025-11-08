@@ -291,14 +291,15 @@ func _build_hop_segments(from_cell: Vector2i, to_cell: Vector2i) -> Array[Dictio
 	var hop_count: int = max(1, int(HOPS_PER_TILE))
 	var from_top: float = float(_surface_top_z(from_cell))
 	var to_top: float = float(_surface_top_z(to_cell))
+	var sample_cache: Dictionary = {}
 	for i in range(hop_count):
 		var start_frac: float = float(i) / float(hop_count)
 		var end_frac: float = float(i + 1) / float(hop_count)
-		var start_pos: Vector2 = _path_sprite_position(from_cell, to_cell, start_frac)
-		var end_pos: Vector2 = _path_sprite_position(from_cell, to_cell, end_frac)
-		var start_height: float = lerpf(from_top, to_top, start_frac)
-		var end_height: float = lerpf(from_top, to_top, end_frac)
-		var local_delta: float = end_height - start_height
+		var start_sample := _path_sample(from_cell, to_cell, start_frac, from_top, to_top, sample_cache)
+		var end_sample := _path_sample(from_cell, to_cell, end_frac, from_top, to_top, sample_cache)
+		var start_pos: Vector2 = start_sample["pos"]
+		var end_pos: Vector2 = end_sample["pos"]
+		var local_delta: float = float(end_sample["height"]) - float(start_sample["height"])
 		var duration: float = max(0.05, _seconds_per_tile * (end_frac - start_frac))
 		var arc_height: float = HOP_ARC_BASE_PX + HOP_ARC_PER_LEVEL_PX * abs(local_delta)
 		segments.append({
@@ -309,19 +310,39 @@ func _build_hop_segments(from_cell: Vector2i, to_cell: Vector2i) -> Array[Dictio
 		})
 	return segments
 
-func _path_sprite_position(from_cell: Vector2i, to_cell: Vector2i, fraction: float) -> Vector2:
-	var t := clampf(fraction, 0.0, 1.0)
+func _path_sample(
+	from_cell: Vector2i,
+	to_cell: Vector2i,
+	fraction: float,
+	from_top: float,
+	to_top: float,
+	cache: Dictionary
+) -> Dictionary:
+	var t: float = clampf(fraction, 0.0, 1.0)
+	var cache_key: int = int(round(t * 1_000_000.0))
+	if cache.has(cache_key):
+		return cache[cache_key]
+
+	var sample: Dictionary
 	if not is_instance_valid(_map_ref):
 		var fallback_cell: Vector2i = (from_cell if t < 0.5 else to_cell)
-		return _cell_sprite_position(fallback_cell)
-	var start := Vector2(float(from_cell.x), float(from_cell.y))
-	var delta := Vector2(float(to_cell.x - from_cell.x), float(to_cell.y - from_cell.y))
-	var pos_xy := start + delta * t
-	var z_from := float(_surface_top_z(from_cell))
-	var z_to := float(_surface_top_z(to_cell))
-	var z := lerpf(z_from, z_to, t)
-	var iso := MapUtilsRef.project_iso3d(_map_ref, pos_xy.x, pos_xy.y, z)
-	return iso - _anchor + _texture_center
+		var fallback_height: float = (from_top if t < 0.5 else to_top)
+		sample = {
+			"pos": _cell_sprite_position(fallback_cell),
+			"height": fallback_height,
+		}
+	else:
+		var start := Vector2(float(from_cell.x), float(from_cell.y))
+		var delta := Vector2(float(to_cell.x - from_cell.x), float(to_cell.y - from_cell.y))
+		var pos_xy := start + delta * t
+		var z := lerpf(from_top, to_top, t)
+		var iso := MapUtilsRef.project_iso3d(_map_ref, pos_xy.x, pos_xy.y, z)
+		sample = {
+			"pos": iso - _anchor + _texture_center,
+			"height": z,
+		}
+	cache[cache_key] = sample
+	return sample
 
 func _play_walk_fx(step_dir: Vector2i, hop_duration: float) -> void:
 	if hop_duration <= 0.0:

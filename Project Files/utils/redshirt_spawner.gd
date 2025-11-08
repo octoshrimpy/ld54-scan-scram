@@ -12,6 +12,8 @@ var cluster_radius_step: float = 0.5
 var max_attempts: int = 40
 var flip_chance: float = 0.5
 var _active_radius: int = 3
+const LAND_SAMPLE_MULTIPLIER: int = 8
+const LAND_SAMPLE_MIN: int = 36
 
 func spawn_redshirts(
 	_place_sprite: Callable,
@@ -31,13 +33,18 @@ func spawn_redshirts(
 	var target_count: int = randi_range(min_count, max_count)
 	var flip_prob: float = clampf(flip_chance, 0.0, 1.0)
 
-	var land_cells: Array[Vector3i] = _collect_land_cells(is_water, surfaces, width, height)
+	var land_cells: Array[Vector3i] = _collect_land_cells(is_water, surfaces, width, height, target_count)
 	if land_cells.is_empty():
 		return []
 
 	_active_radius = _effective_radius(target_count)
 
 	var cluster: Array[Vector2i] = _select_cluster(land_cells, target_count)
+	if cluster.size() < target_count and land_cells.size() < width * height:
+		land_cells = _collect_land_cells(is_water, surfaces, width, height, target_count, true)
+		if land_cells.is_empty():
+			return []
+		cluster = _select_cluster(land_cells, target_count)
 	if cluster.is_empty():
 		return []
 
@@ -64,19 +71,38 @@ func spawn_redshirts(
 
 	return placements
 
-func _collect_land_cells(is_water: Callable, surfaces: Array, width: int, height: int) -> Array[Vector3i]:
+func _collect_land_cells(
+	is_water: Callable,
+	surfaces: Array,
+	width: int,
+	height: int,
+	target_count: int,
+	force_full_scan: bool = false
+) -> Array[Vector3i]:
 	var cells: Array[Vector3i] = []
-	for y in range(height):
-		for x in range(width):
+	var goal: int = width * height
+	if not force_full_scan:
+		var sample_goal: int = max(target_count * LAND_SAMPLE_MULTIPLIER, LAND_SAMPLE_MIN)
+		goal = min(goal, sample_goal)
+	if goal <= 0:
+		return cells
+	var start_y: int = (0 if height <= 0 else randi_range(0, max(0, height - 1)))
+	var start_x: int = (0 if width <= 0 else randi_range(0, max(0, width - 1)))
+	for y_offset in range(height):
+		var y := ((start_y + y_offset) % height) if height > 0 else 0
+		if y < 0 or y >= surfaces.size():
+			continue
+		var row: Array = surfaces[y] as Array
+		for x_offset in range(width):
+			var x := ((start_x + x_offset) % width) if width > 0 else 0
 			if bool(is_water.call(x, y)):
 				continue
-			if y < 0 or y >= surfaces.size():
-				continue
-			var row: Array = surfaces[y] as Array
 			if x < 0 or x >= row.size():
 				continue
 			var z_surf: int = int(row[x])
 			cells.append(Vector3i(x, y, z_surf))
+			if not force_full_scan and cells.size() >= goal:
+				return cells
 	return cells
 
 func _select_cluster(land_cells: Array[Vector3i], target_count: int) -> Array[Vector2i]:

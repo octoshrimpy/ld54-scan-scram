@@ -102,7 +102,24 @@ const HEIGHT_MAX_T_CAP: float = 1.5
 const WATER_ALPHA: float = 0.33
 const REED_TILE := Vector2i(23, 17)
 const REED_SPAWN_CHANCE: float = 0.4
+const ENABLE_WIGGLE_SHADER: bool = false
 const WiggleShader := preload("res://shaders/iso_wiggle.gdshader")
+const BEAM_COLOR: Color = Color(0.75, 0.95, 1.0, 0.9)
+const BEAM_DURATION: float = 2.0
+const BEAM_HEIGHT_PX: float = 192.0
+const BEAM_WIDTH_BASE_PX: float = 28.0
+const BEAM_WIDTH_PER_AGENT_PX: float = 1.4
+const BEAM_CAMERA_FOCUS_TIME: float = 0.6
+const BEAM_SPAWN_DELAY: float = BEAM_CAMERA_FOCUS_TIME
+const BEAM_REDSHIRT_DELAY: float = 1.0
+const BEAM_LANDING_PARTICLE_AMOUNT: int = 42
+const BEAM_LANDING_PARTICLE_LIFETIME: float = 2.0
+const BEAM_LANDING_PARTICLE_RADIUS: float = 10.0
+const BEAM_LANDING_PARTICLE_SPEED: float = 140.0
+const BEAM_COLUMN_PARTICLE_AMOUNT: int = 90
+const BEAM_COLUMN_PARTICLE_SPEED: float = 80.0
+const BEAM_COLUMN_SEGMENTS: int = 6
+const REDSHIRT_SPAWN_FADE: float = 0.35
 
 # ── Surface detail scatter controls ───────────────────────────────────────────
 const DETAIL_NOISE_FREQ: float = 0.18
@@ -159,6 +176,8 @@ var _trees_cache: TreeGen
 var _boulders_cache: BoulderGen
 var _redshirt_spawner = RedshirtSpawnerScript.new()
 var _camera_centered_by_spawn: bool = false
+var _camera_focus_tween: Tween
+var _active_redshirts: Array = []
 
 # ── cached atlas source / metrics ─────────────────────────────────────────────
 var _atlas_src: TileSetAtlasSource
@@ -233,6 +252,49 @@ func project_iso3d(x: float, y: float, z: float) -> Vector2:
 func _project_iso3d(x: float, y: float, z: float) -> Vector2:
 	return project_iso3d(x, y, z)
 
+func cell_to_world(cell: Vector2i, z_override: Variant = null) -> Vector2:
+	var z_value: int = 0
+	if z_override != null:
+		z_value = int(z_override)
+	else:
+		z_value = surface_z_at(cell.x, cell.y)
+	return project_iso3d(float(cell.x), float(cell.y), float(z_value))
+
+func world_to_cell(world: Vector2, search_radius: int = 2) -> Vector2i:
+	if USE_TILEMAP_GRID and _base_tm != null:
+		var mapped: Vector2i = _base_tm.local_to_map(world)
+		return _clamp_cell(mapped)
+	var approx: Vector2 = _approximate_cell_from_world(world)
+	var estimated: Vector2i = _clamp_cell(Vector2i(roundi(approx.x), roundi(approx.y)))
+	var best_cell: Vector2i = estimated
+	var best_dist: float = INF
+	var radius: int = max(0, search_radius)
+	var min_x: int = max(0, estimated.x - radius)
+	var max_x: int = min(W - 1, estimated.x + radius)
+	var min_y: int = max(0, estimated.y - radius)
+	var max_y: int = min(H - 1, estimated.y + radius)
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var cell: Vector2i = Vector2i(x, y)
+			var projected: Vector2 = cell_to_world(cell)
+			var dist: float = projected.distance_squared_to(world)
+			if dist < best_dist:
+				best_dist = dist
+				best_cell = cell
+	return best_cell
+
+func _approximate_cell_from_world(world: Vector2) -> Vector2:
+	var half_w: float = max(0.0001, _tile_w * 0.5)
+	var half_h: float = max(0.0001, _tile_h * 0.5)
+	var nx: float = world.x / half_w
+	var ny: float = world.y / half_h
+	var est_x: float = 0.5 * (ny + nx)
+	var est_y: float = 0.5 * (ny - nx)
+	return Vector2(est_x, est_y)
+
+func _clamp_cell(cell: Vector2i) -> Vector2i:
+	return Vector2i(clampi(cell.x, 0, W - 1), clampi(cell.y, 0, H - 1))
+
 func _place_sprite(
 	atlas_xy: Vector2i,
 	x: int,
@@ -305,6 +367,12 @@ func _make_wiggle_material(params: Dictionary) -> ShaderMaterial:
 	return mat
 
 func _setup_wiggle_materials() -> void:
+	_water_surface_material = null
+	_water_depth_material = null
+	_grass_blade_material = null
+	_reed_material = null
+	if not ENABLE_WIGGLE_SHADER or WiggleShader == null:
+		return
 	_water_surface_material = _make_wiggle_material({
 		"axis": Vector2(0.35, -0.2),
 		"amplitude_px": 1.6,
@@ -590,6 +658,7 @@ func get_max_elevation() -> int:
 func _clear_drawables() -> void:
 	if not draw_root:
 		return
+	_despawn_redshirts()
 	for c in draw_root.get_children():
 		c.queue_free()
 
@@ -770,13 +839,52 @@ func _spawn_redshirts(surfaces: Array) -> void:
 	if pending.is_empty():
 		return
 	var center_cell := _cluster_center_cell(positions)
+	_schedule_redshirt_beam(center_cell, pending, positions, surfaces)
+
+func _schedule_redshirt_beam(center_cell: Vector2i, pending: Array, positions: Array[Vector2i], surfaces: Array) -> void:
+	var pending_copy: Array = []
+	for entry_variant in pending:
+		if entry_variant is Dictionary:
+			pending_copy.append((entry_variant as Dictionary).duplicate(true))
+	var positions_copy: Array[Vector2i] = []
+	for cell_variant in positions:
+		positions_copy.append(cell_variant)
+	_focus_camera_on_cell(center_cell, BEAM_CAMERA_FOCUS_TIME)
+	if BEAM_SPAWN_DELAY <= 0.0:
+		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
+		return
+	var tree := get_tree()
+	if tree == null:
+		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
+		return
+	var timer := tree.create_timer(BEAM_SPAWN_DELAY)
+	timer.timeout.connect(func ():
+		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
+	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
+
+func _finalize_redshirt_beam(center_cell: Vector2i, pending: Array, positions: Array[Vector2i], surfaces: Array) -> void:
+	_play_beam_down_effect(center_cell, positions.size())
+	var delay: float = max(0.0, BEAM_REDSHIRT_DELAY)
+	if delay <= 0.0:
+		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
+		return
+	var tree := get_tree()
+	if tree == null:
+		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
+		return
+	var timer := tree.create_timer(delay)
+	timer.timeout.connect(func ():
+		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
+	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
+
+func _spawn_redshirt_batch(pending: Array, center_cell: Vector2i, positions: Array[Vector2i], surfaces: Array) -> void:
 	for entry_variant in pending:
 		var entry: Dictionary = entry_variant
 		var atlas_xy: Vector2i = entry.get("atlas", Vector2i.ZERO)
 		var pos: Vector2i = entry.get("pos", Vector2i.ZERO)
 		var flip_h: bool = bool(entry.get("flip_h", false))
 		_place_redshirt_sprite(atlas_xy, pos.x, pos.y, flip_h, center_cell, _random_redshirt_radius())
-	_focus_camera_on_cells(positions, surfaces)
+	_camera_centered_by_spawn = true
 
 func _place_redshirt_sprite(
 	atlas_xy: Vector2i,
@@ -807,27 +915,33 @@ func _place_redshirt_sprite(
 		REDSHIRT_SECONDS_PER_TILE,
 		flip_h
 	)
+	_register_redshirt(agent)
+	var tint := agent.modulate
+	agent.modulate = Color(tint.r, tint.g, tint.b, 0.0)
+	var fade := agent.create_tween()
+	fade.tween_property(agent, "modulate:a", 1.0, REDSHIRT_SPAWN_FADE).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)
 
-func _focus_camera_on_cells(cells: Array[Vector2i], surfaces: Array) -> void:
-	if cam == null or cells.is_empty():
+func _focus_camera_on_cell(center_cell: Vector2i, duration: float) -> void:
+	if cam == null:
 		return
-	var accum: Vector2 = Vector2.ZERO
-	var count: int = 0
-	for cell_variant in cells:
-		var pos: Vector2i = cell_variant
-		if pos.y < 0 or pos.y >= surfaces.size():
-			continue
-		var row: Array = surfaces[pos.y]
-		if pos.x < 0 or pos.x >= row.size():
-			continue
-		var z_surf := int(row[pos.x])
-		var z_top : int = min(z_surf + 1, Z_MAX)
-		accum += project_iso3d(float(pos.x), float(pos.y), float(z_top))
-		count += 1
-	if count <= 0:
+	var z_top := surface_z_at(center_cell.x, center_cell.y)
+	var target := project_iso3d(float(center_cell.x), float(center_cell.y), float(z_top + 1))
+	if duration <= 0.0:
+		if _camera_focus_tween != null:
+			_camera_focus_tween.kill()
+			_camera_focus_tween = null
+		cam.global_position = target
+		_camera_centered_by_spawn = true
 		return
-	cam.global_position = accum / float(count)
-	_camera_centered_by_spawn = true
+	_camera_centered_by_spawn = false
+	if _camera_focus_tween != null:
+		_camera_focus_tween.kill()
+	_camera_focus_tween = cam.create_tween()
+	_camera_focus_tween.tween_property(cam, "global_position", target, duration).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)
+	_camera_focus_tween.finished.connect(func ():
+		_camera_centered_by_spawn = true
+		_camera_focus_tween = null
+	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
 
 func _cluster_center_cell(cells: Array[Vector2i]) -> Vector2i:
 	if cells.is_empty():
@@ -843,6 +957,92 @@ func _cluster_center_cell(cells: Array[Vector2i]) -> Vector2i:
 	var cx := clampi(int(round(accum_x * inv)), 0, max(0, dims.x - 1))
 	var cy := clampi(int(round(accum_y * inv)), 0, max(0, dims.y - 1))
 	return Vector2i(cx, cy)
+
+func _register_redshirt(agent: Node) -> void:
+	if agent == null:
+		return
+	_active_redshirts.append(agent)
+	var cleanup := Callable(self, "_on_redshirt_tree_exit").bind(agent)
+	if agent.tree_exited.is_connected(cleanup):
+		return
+	agent.tree_exited.connect(cleanup, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
+
+func _on_redshirt_tree_exit(agent: Node) -> void:
+	if _active_redshirts.has(agent):
+		_active_redshirts.erase(agent)
+
+func _despawn_redshirts() -> void:
+	for agent in _active_redshirts:
+		if is_instance_valid(agent):
+			agent.queue_free()
+	_active_redshirts.clear()
+
+func _play_beam_down_effect(center_cell: Vector2i, count: int) -> void:
+	if draw_root == null:
+		return
+	var z_top := surface_z_at(center_cell.x, center_cell.y)
+	var beam_base_pos := project_iso3d(float(center_cell.x), float(center_cell.y), float(z_top + 1))
+	var beam := Node2D.new()
+	beam.position = beam_base_pos - Vector2(0.0, BEAM_HEIGHT_PX) # anchor so the bottom sits on the ground plane
+	beam.z_index = MapUtilsRef.sort_key(center_cell.x, center_cell.y, z_top + 2) + 128
+	var poly := Polygon2D.new()
+	var width := BEAM_WIDTH_BASE_PX + float(max(0, count - 1)) * BEAM_WIDTH_PER_AGENT_PX
+	var half_w := width * 0.5
+	poly.polygon = PackedVector2Array([
+		Vector2(-half_w, 0.0),
+		Vector2(half_w, 0.0),
+		Vector2(half_w * 0.5, BEAM_HEIGHT_PX),
+		Vector2(-half_w * 0.5, BEAM_HEIGHT_PX),
+	])
+	poly.modulate = BEAM_COLOR
+	poly.antialiased = true
+	beam.add_child(poly)
+	draw_root.add_child(beam)
+	poly.scale = Vector2(0.3, 0.1)
+	var shimmer := CPUParticles2D.new()
+	shimmer.position = Vector2(0.0, BEAM_HEIGHT_PX * 0.5)
+	shimmer.amount = BEAM_COLUMN_PARTICLE_AMOUNT
+	shimmer.lifetime = BEAM_DURATION
+	shimmer.one_shot = true
+	shimmer.preprocess = BEAM_DURATION
+	shimmer.direction = Vector2(0.0, -1.0)
+	shimmer.spread = 30.0
+	shimmer.initial_velocity_min = BEAM_COLUMN_PARTICLE_SPEED * 0.35
+	shimmer.initial_velocity_max = BEAM_COLUMN_PARTICLE_SPEED
+	shimmer.gravity = Vector2.ZERO
+	shimmer.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINTS
+	var shimmer_points := PackedVector2Array()
+	var segments: int = max(1, BEAM_COLUMN_SEGMENTS)
+	for i in range(segments + 1):
+		var t := float(i) / float(segments)
+		var y := t * BEAM_HEIGHT_PX
+		shimmer_points.append(Vector2(-half_w, y))
+		shimmer_points.append(Vector2(half_w, y))
+	shimmer.emission_points = shimmer_points
+	shimmer.modulate = Color(BEAM_COLOR.r, BEAM_COLOR.g, BEAM_COLOR.b, 0.8)
+	shimmer.emitting = true
+	beam.add_child(shimmer)
+	var sparks := CPUParticles2D.new()
+	sparks.position = Vector2(0.0, BEAM_HEIGHT_PX)
+	sparks.amount = BEAM_LANDING_PARTICLE_AMOUNT
+	sparks.lifetime = BEAM_LANDING_PARTICLE_LIFETIME
+	sparks.one_shot = true
+	sparks.preprocess = BEAM_LANDING_PARTICLE_LIFETIME
+	sparks.spread = 240.0
+	sparks.initial_velocity_min = BEAM_LANDING_PARTICLE_SPEED * 0.5
+	sparks.initial_velocity_max = BEAM_LANDING_PARTICLE_SPEED
+	sparks.gravity = Vector2(0.0, 420.0)
+	sparks.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
+	sparks.emission_sphere_radius = BEAM_LANDING_PARTICLE_RADIUS
+	sparks.modulate = BEAM_COLOR
+	sparks.emitting = true
+	beam.add_child(sparks)
+	var tween := beam.create_tween()
+	tween.tween_property(poly, "scale", Vector2(1.0, 1.0), BEAM_DURATION * 0.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.tween_property(poly, "modulate:a", 0.0, BEAM_DURATION * 0.4).set_delay(BEAM_DURATION * 0.3).set_ease(Tween.EASE_IN)
+	tween.finished.connect(func ():
+		beam.queue_free()
+	)
 
 func _random_redshirt_radius() -> int:
 	var jitter := (randi_range(-REDSHIRT_WANDER_RADIUS_JITTER, REDSHIRT_WANDER_RADIUS_JITTER) if REDSHIRT_WANDER_RADIUS_JITTER > 0 else 0)

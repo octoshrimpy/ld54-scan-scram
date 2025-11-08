@@ -131,10 +131,41 @@ func cell_to_world(cell: Vector2i) -> Vector2:
 	return _nav.cell_to_world(cell) + world_offset
 
 func world_to_cell(world: Vector2) -> Vector2i:
-	if _nav == null or _map == null:
+	if _map == null:
 		return current_cell
 	var offset_world := world - world_offset
+	if _map.has_method("world_to_cell"):
+		var candidate: Vector2i = _map.call("world_to_cell", offset_world)
+		if _nav == null:
+			return candidate
+		var snapped := _clamp_cell_to_nav(candidate)
+		if _nav.is_walkable(snapped):
+			return snapped
+	if _nav == null:
+		return current_cell
+	return _brute_force_world_to_cell(offset_world)
+
+func _clamp_cell_to_nav(cell: Vector2i) -> Vector2i:
+	if _nav == null:
+		return cell
 	var rect := _nav.get_region()
+	if rect.size == Vector2i.ZERO:
+		return cell
+	var min_x := rect.position.x
+	var max_x := rect.position.x + rect.size.x - 1
+	var min_y := rect.position.y
+	var max_y := rect.position.y + rect.size.y - 1
+	return Vector2i(
+		clampi(cell.x, min_x, max_x),
+		clampi(cell.y, min_y, max_y)
+	)
+
+func _brute_force_world_to_cell(world: Vector2) -> Vector2i:
+	if _nav == null:
+		return current_cell
+	var rect := _nav.get_region()
+	if rect.size == Vector2i.ZERO:
+		return current_cell
 	var best_cell := current_cell
 	var best_dist := INF
 	for y in range(rect.position.y, rect.position.y + rect.size.y):
@@ -143,7 +174,7 @@ func world_to_cell(world: Vector2) -> Vector2i:
 			if not _nav.is_walkable(cell):
 				continue
 			var pos := _nav.cell_to_world(cell)
-			var d := pos.distance_squared_to(offset_world)
+			var d := pos.distance_squared_to(world)
 			if d < best_dist:
 				best_dist = d
 				best_cell = cell

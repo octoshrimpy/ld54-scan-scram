@@ -77,6 +77,8 @@ func get_world_path(start: Vector2i, goal: Vector2i) -> Array[Vector2]:
 func cell_to_world(cell: Vector2i) -> Vector2:
 	if _map == null:
 		return Vector2.ZERO
+	if _map.has_method("cell_to_world"):
+		return _map.call("cell_to_world", cell)
 	var z := MapUtilsRef.surface_z(_map, cell.x, cell.y, 0)
 	return MapUtilsRef.project_iso3d(_map, float(cell.x), float(cell.y), float(z))
 
