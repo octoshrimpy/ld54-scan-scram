@@ -1,7 +1,7 @@
 extends Node2D
 class_name PathfindingAgent
 
-const NavigationGrid := preload("res://utils/navigation_grid.gd")
+const NavigationGridRef := preload("res://utils/navigation_grid.gd")
 
 # PathfindingAgent — shareable base class that gives inheriting entities
 # grid-based A* navigation over the PlanetMap.
@@ -18,7 +18,7 @@ signal path_failed(target: Vector2i)
 signal path_blocked(blocked_at: Vector2i)
 
 @export var map_path: NodePath
-@export var navigation_grid: NavigationGrid
+@export var navigation_grid: NavigationGridRef
 @export var auto_build_navigation: bool = true
 @export var move_speed: float = 64.0
 @export var arrival_radius: float = 6.0
@@ -29,7 +29,7 @@ signal path_blocked(blocked_at: Vector2i)
 @export var world_offset: Vector2 = Vector2.ZERO
 
 var _map: Node
-var _nav: NavigationGrid
+var _nav: NavigationGridRef
 var _owns_navigation: bool = false
 var _cell_path: Array[Vector2i] = []
 var _world_path: Array[Vector2] = []
@@ -74,7 +74,7 @@ func _physics_process(delta: float) -> void:
 		var direction: Vector2 = to_target.normalized()
 		global_position += direction * step_distance
 
-func navigate_to_cell(target_cell: Vector2i, rebuild_navigation: bool = false) -> bool:
+func navigate_to_cell(target_cell: Vector2i, force_nav_rebuild: bool = false) -> bool:
 	if target_cell == current_cell:
 		_target_cell = target_cell
 		emit_signal("path_completed", target_cell)
@@ -82,7 +82,7 @@ func navigate_to_cell(target_cell: Vector2i, rebuild_navigation: bool = false) -
 	if _nav == null:
 		push_warning("PathfindingAgent: navigation grid is not set.")
 		return false
-	if rebuild_navigation and _owns_navigation:
+	if force_nav_rebuild and _owns_navigation:
 		_nav.rebuild()
 
 	var path: Array[Vector2i] = _nav.get_cell_path(current_cell, target_cell)
@@ -104,7 +104,7 @@ func stop_path(preserve_target: bool = false) -> void:
 	if not preserve_target:
 		_target_cell = Vector2i(-1, -1)
 
-func set_navigation_grid(nav: NavigationGrid, owns_navigation: bool = false) -> void:
+func set_navigation_grid(nav: NavigationGridRef, owns_navigation: bool = false) -> void:
 	_nav = nav
 	_owns_navigation = owns_navigation
 	if _nav == null:
@@ -166,7 +166,7 @@ func _setup_navigation() -> void:
 		if dims == Vector2i.ZERO or _map == null:
 			push_warning("PathfindingAgent: cannot build navigation grid without valid map and dimensions.")
 			return
-		_nav = NavigationGrid.new()
+		_nav = NavigationGridRef.new()
 		_owns_navigation = true
 		_sync_agent_preferences()
 		var region := Rect2i(Vector2i.ZERO, dims)

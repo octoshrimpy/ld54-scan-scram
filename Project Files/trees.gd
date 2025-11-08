@@ -279,6 +279,7 @@ const SPECIES_PROPERTY_KEYS := [
 ]
 
 const DEFAULT_SPECIES_ID := "evergreen"
+const WiggleShader := preload("res://shaders/iso_wiggle.gdshader")
 
 # ─────────────────────────── Internal caches / state ─────────────────────────
 var _atlas_src: TileSetAtlasSource
@@ -297,6 +298,7 @@ var _land_cells: Array[Vector2i] = []
 var _shoreline_land_cells: Array[Vector2i] = []
 var _shoreline_water_cells: Array[Vector2i] = []
 var _water_cells: Array[Vector2i] = []
+var _leaf_wiggle_material: ShaderMaterial
 
 # helper records
 class GroundSpawn:
@@ -319,6 +321,7 @@ func _ready() -> void:
 		trunks_root = self
 	_map_cache = _resolve_map()
 	_cache_base_species_config()
+	_setup_leaf_material()
 	_regenerate_forest()
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -337,6 +340,34 @@ func _restore_base_species_config() -> void:
 		return
 	for key in _base_species_config.keys():
 		set(key, _base_species_config[key])
+
+func _setup_leaf_material() -> void:
+	if WiggleShader == null:
+		return
+	_leaf_wiggle_material = ShaderMaterial.new()
+	_leaf_wiggle_material.shader = WiggleShader
+	_leaf_wiggle_material.set_shader_parameter("axis", Vector2(0.55, -0.35))
+	_leaf_wiggle_material.set_shader_parameter("amplitude_px", 0.95)
+	_leaf_wiggle_material.set_shader_parameter("frequency", 3.1)
+	_leaf_wiggle_material.set_shader_parameter("speed", 0.85)
+	_leaf_wiggle_material.set_shader_parameter("noise_mix", 0.4)
+	_leaf_wiggle_material.set_shader_parameter("world_phase_scale", Vector2(0.03, 0.03))
+	_leaf_wiggle_material.set_shader_parameter("base_phase", 0.65)
+	var wind_dir := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+	if wind_dir.length_squared() < 0.0001:
+		wind_dir = Vector2(0.7, 0.2)
+	else:
+		wind_dir = wind_dir.normalized()
+	_leaf_wiggle_material.set_shader_parameter("wind_noise_scale", Vector2(0.006, 0.01))
+	_leaf_wiggle_material.set_shader_parameter(
+		"wind_noise_offset",
+		Vector2(randf_range(-500.0, 500.0), randf_range(-500.0, 500.0))
+	)
+	_leaf_wiggle_material.set_shader_parameter("wind_scroll_dir", wind_dir)
+	_leaf_wiggle_material.set_shader_parameter("wind_scroll_speed", randf_range(0.05, 0.18))
+	_leaf_wiggle_material.set_shader_parameter("wind_strength", 0.6)
+	_leaf_wiggle_material.set_shader_parameter("wind_min_strength", 0.12)
+	_leaf_wiggle_material.set_shader_parameter("wind_axis_mix", 0.9)
 
 func _apply_species_overrides(overrides: Dictionary) -> void:
 	if overrides.is_empty():
@@ -1324,6 +1355,9 @@ func _place_leaf_sprite(temp: Node2D, top_left: Vector2, spawn: GroundSpawn, lea
 	spr.z_as_relative = false
 	spr.z_index = _sort_key(spawn.cell.x, spawn.cell.y, spawn.z + leaves_z_offset)
 	spr.global_position = top_left
+	if _leaf_wiggle_material != null:
+		spr.material = _leaf_wiggle_material
+		spr.set_instance_shader_parameter("leaf_world_pos", spr.global_position)
 	temp.add_child(spr)
 	return spr
 

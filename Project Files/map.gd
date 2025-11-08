@@ -7,8 +7,12 @@
 class_name PlanetMap
 extends Node2D
 
+signal map_rebuild_started
+signal map_rebuild_finished
+
 const MapUtilsRef := preload("res://utils/map_utils.gd")
 const RedshirtSpawnerScript := preload("res://utils/redshirt_spawner.gd")
+const RedshirtAgentScript := preload("res://utils/redshirt_agent.gd")
 
 # ── Scene refs ────────────────────────────────────────────────────────────────
 @onready var cam: Camera2D = $Camera2D
@@ -98,6 +102,7 @@ const HEIGHT_MAX_T_CAP: float = 1.5
 const WATER_ALPHA: float = 0.33
 const REED_TILE := Vector2i(23, 17)
 const REED_SPAWN_CHANCE: float = 0.4
+const WiggleShader := preload("res://shaders/iso_wiggle.gdshader")
 
 # ── Surface detail scatter controls ───────────────────────────────────────────
 const DETAIL_NOISE_FREQ: float = 0.18
@@ -131,6 +136,10 @@ const DEFAULT_BOULDER_TILE_MAX := Vector2i(57, 68)
 const BOULDER_TILE_OFFSET_MIN := DEFAULT_BOULDER_TILE_MIN - FAMILIES[DEFAULT_FAM_STONE]
 const BOULDER_TILE_OFFSET_MAX := DEFAULT_BOULDER_TILE_MAX - FAMILIES[DEFAULT_FAM_STONE]
 const REDSHIRT_SORT_BIAS: int = 64
+const REDSHIRT_WANDER_RADIUS: int = 6
+const REDSHIRT_WANDER_RADIUS_JITTER: int = 3
+const REDSHIRT_MOVE_INTERVAL: Vector2 = Vector2(1.0, 3.2)
+const REDSHIRT_SECONDS_PER_TILE: float = 0.38
 
 # ── noise fields ──────────────────────────────────────────────────────────────
 var top_noise: FastNoiseLite     = FastNoiseLite.new()
@@ -157,6 +166,10 @@ var _atlas_tex: Texture2D
 var _tile_w := 16.0
 var _tile_h := 8.0
 var _base_tm: TileMapLayer
+var _water_surface_material: ShaderMaterial
+var _water_depth_material: ShaderMaterial
+var _grass_blade_material: ShaderMaterial
+var _reed_material: ShaderMaterial
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -165,6 +178,7 @@ func _ready() -> void:
 	_setup_draw_root()
 	_setup_noises()
 	_bind_atlas_source()
+	_setup_wiggle_materials()
 	_hide_tilemap_layers()
 	_rebuild()
 
@@ -219,7 +233,14 @@ func project_iso3d(x: float, y: float, z: float) -> Vector2:
 func _project_iso3d(x: float, y: float, z: float) -> Vector2:
 	return project_iso3d(x, y, z)
 
-func _place_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, tint: Color = Color(1,1,1,1)) -> void:
+func _place_sprite(
+	atlas_xy: Vector2i,
+	x: int,
+	y: int,
+	z: int,
+	tint: Color = Color(1,1,1,1),
+	sprite_material: Material = null
+) -> void:
 	if _atlas_src == null or _atlas_tex == null:
 		return
 	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
@@ -237,6 +258,8 @@ func _place_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, tint: Color = Col
 	var anchor := Vector2(_tile_w * 0.5, _tile_h)
 	sp.position = p - anchor
 	sp.centered = false
+	if sprite_material != null:
+		sp.material = sprite_material
 	sp.z_as_relative = false
 	sp.z_index = sort_key(x, y, z)
 	sp.modulate = tint
@@ -271,6 +294,55 @@ func _place_detail_sprite(
 	sp.scale = scale_vec
 	sp.rotation = rotation_radians
 	draw_root.add_child(sp)
+
+func _make_wiggle_material(params: Dictionary) -> ShaderMaterial:
+	if WiggleShader == null:
+		return null
+	var mat := ShaderMaterial.new()
+	mat.shader = WiggleShader
+	for key in params.keys():
+		mat.set_shader_parameter(StringName(key), params[key])
+	return mat
+
+func _setup_wiggle_materials() -> void:
+	_water_surface_material = _make_wiggle_material({
+		"axis": Vector2(0.35, -0.2),
+		"amplitude_px": 1.6,
+		"frequency": 5.4,
+		"speed": 0.65,
+		"noise_mix": 0.45,
+		"alpha_soften": 0.1,
+		"world_phase_scale": Vector2(0.009, 0.009),
+		"base_phase": 0.0
+	})
+	_water_depth_material = _make_wiggle_material({
+		"axis": Vector2(0.25, -0.15),
+		"amplitude_px": 0.6,
+		"frequency": 4.5,
+		"speed": 0.5,
+		"noise_mix": 0.4,
+		"alpha_soften": 0.05,
+		"world_phase_scale": Vector2(0.008, 0.008),
+		"base_phase": 0.4
+	})
+	_grass_blade_material = _make_wiggle_material({
+		"axis": Vector2(0.65, -0.3),
+		"amplitude_px": 0.85,
+		"frequency": 3.5,
+		"speed": 1.35,
+		"noise_mix": 0.3,
+		"world_phase_scale": Vector2(0.02, 0.02),
+		"base_phase": 1.1
+	})
+	_reed_material = _make_wiggle_material({
+		"axis": Vector2(0.55, -0.35),
+		"amplitude_px": 1.1,
+		"frequency": 2.6,
+		"speed": 1.0,
+		"noise_mix": 0.4,
+		"world_phase_scale": Vector2(0.012, 0.012),
+		"base_phase": 2.2
+	})
 
 # ── atlas helpers → atlas coords ──────────────────────────────────────────────
 func _family_base(fam: String) -> Vector2i:
@@ -529,6 +601,7 @@ func _center_camera_on_middle() -> void:
 	cam.global_position = p
 
 func _rebuild(new_seed: int = -1) -> void:
+	map_rebuild_started.emit()
 	_clear_drawables()
 	_camera_centered_by_spawn = false
 	rng_seed = (new_seed if new_seed != -1 else randi())
@@ -541,6 +614,7 @@ func _rebuild(new_seed: int = -1) -> void:
 	_spawn_cube_terrain()
 	if not _camera_centered_by_spawn:
 		_center_camera_on_middle()
+	map_rebuild_finished.emit()
 
 # ── main build (per-column surface, fill below, water where air≤sea) ──────────
 const SEA_Z := 0
@@ -608,7 +682,8 @@ func _spawn_cube_terrain() -> void:
 				for z in range(0, water_cap + 1):
 					if z > z_surf:
 						var atlas_xy := (atlas_water_surface if z == water_cap else atlas_water_depth)
-						_place_sprite(atlas_xy, x, y, z, water_tint)
+						var mat := (_water_surface_material if z == water_cap else _water_depth_material)
+						_place_sprite(atlas_xy, x, y, z, water_tint, mat)
 						column_has_water = true
 			water_row[x] = column_has_water
 			var has_grass_top := bool(row_grass[x]) and not column_has_water
@@ -616,7 +691,7 @@ func _spawn_cube_terrain() -> void:
 				_place_sprite(atlas_grass, x, y, z_surf)
 				var n_carpet: float = 0.5 + 0.5 * carpet_noise.get_noise_2d(float(x), float(y))
 				if n_carpet > CARPET_PERLIN_THRESH and z_surf + 1 <= Z_MAX:
-					_place_sprite(_grass_blade_atlas(), x, y, z_surf + 1)
+					_place_sprite(_grass_blade_atlas(), x, y, z_surf + 1, Color(1, 1, 1, 1), _grass_blade_material)
 			else:
 				_place_sprite(atlas_dirt, x, y, z_surf)
 
@@ -632,7 +707,6 @@ func _spawn_cube_terrain() -> void:
 				_place_sprite(atlas, x, y, z)
 
 			_spawn_surface_detail(x, y, z_surf)
-			_coastline_rim(x, y, z_surf)
 		_water_columns[y] = water_row
 
 	_spawn_shore_reeds(surfaces)
@@ -652,7 +726,7 @@ func _spawn_shore_reeds(surfaces: Array) -> void:
 				continue
 			var z_surf: int = (surfaces[y][x] as int)
 			if z_surf + 1 <= Z_MAX:
-				_place_sprite(atlas_reed, x, y, z_surf + 1)
+				_place_sprite(atlas_reed, x, y, z_surf + 1, Color(1, 1, 1, 1), _reed_material)
 
 func _adjacent_to_water(x: int, y: int) -> bool:
 	var offsets := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -666,7 +740,7 @@ func _adjacent_to_water(x: int, y: int) -> bool:
 	return false
 
 func _spawn_redshirts(surfaces: Array) -> void:
-	if _redshirt_spawner == null:
+	if _redshirt_spawner == null or _atlas_src == null or _atlas_tex == null:
 		return
 	var placements = _redshirt_spawner.spawn_redshirts(
 		Callable(),
@@ -678,6 +752,7 @@ func _spawn_redshirts(surfaces: Array) -> void:
 	)
 	if placements.is_empty():
 		return
+	var pending: Array[Dictionary] = []
 	var positions: Array[Vector2i] = []
 	for placement_variant in placements:
 		if typeof(placement_variant) != TYPE_DICTIONARY:
@@ -685,34 +760,53 @@ func _spawn_redshirts(surfaces: Array) -> void:
 		var placement: Dictionary = placement_variant
 		var atlas_xy: Vector2i = placement.get("atlas", Vector2i.ZERO)
 		var pos: Vector2i = placement.get("pos", Vector2i.ZERO)
-		var z_top: int = int(placement.get("z_top", 0))
 		var flip_h: bool = bool(placement.get("flip_h", false))
-		_place_redshirt_sprite(atlas_xy, pos.x, pos.y, z_top, flip_h)
+		pending.append({
+			"atlas": atlas_xy,
+			"pos": pos,
+			"flip_h": flip_h
+		})
 		positions.append(pos)
-	if positions.is_empty():
+	if pending.is_empty():
 		return
+	var center_cell := _cluster_center_cell(positions)
+	for entry_variant in pending:
+		var entry: Dictionary = entry_variant
+		var atlas_xy: Vector2i = entry.get("atlas", Vector2i.ZERO)
+		var pos: Vector2i = entry.get("pos", Vector2i.ZERO)
+		var flip_h: bool = bool(entry.get("flip_h", false))
+		_place_redshirt_sprite(atlas_xy, pos.x, pos.y, flip_h, center_cell, _random_redshirt_radius())
 	_focus_camera_on_cells(positions, surfaces)
 
-func _place_redshirt_sprite(atlas_xy: Vector2i, x: int, y: int, z: int, flip_h: bool) -> void:
-	if _atlas_src == null or _atlas_tex == null:
+func _place_redshirt_sprite(
+	atlas_xy: Vector2i,
+	x: int,
+	y: int,
+	flip_h: bool,
+	wander_center: Vector2i,
+	wander_radius: int
+) -> void:
+	if _atlas_src == null or _atlas_tex == null or draw_root == null:
 		return
 	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
 	if region.size == Vector2i.ZERO:
 		return
-	var sp := Sprite2D.new()
-	sp.texture = _atlas_tex
-	sp.region_enabled = true
-	sp.region_rect = Rect2(region.position, region.size)
-	var p := project_iso3d(float(x), float(y), float(z))
+	var agent := RedshirtAgentScript.new()
 	var anchor := Vector2(_tile_w * 0.5, _tile_h)
-	sp.position = p - anchor
-	sp.centered = false
-	sp.z_as_relative = false
-	var depth := MapUtilsRef.sort_key(x, y, z)
-	depth = clampi(depth + REDSHIRT_SORT_BIAS, RenderingServer.CANVAS_ITEM_Z_MIN, RenderingServer.CANVAS_ITEM_Z_MAX)
-	sp.z_index = depth
-	sp.flip_h = flip_h
-	draw_root.add_child(sp)
+	draw_root.add_child(agent)
+	agent.configure(
+		self,
+		_atlas_tex,
+		region,
+		Vector2i(x, y),
+		anchor,
+		REDSHIRT_SORT_BIAS,
+		wander_center,
+		wander_radius,
+		REDSHIRT_MOVE_INTERVAL,
+		REDSHIRT_SECONDS_PER_TILE,
+		flip_h
+	)
 
 func _focus_camera_on_cells(cells: Array[Vector2i], surfaces: Array) -> void:
 	if cam == null or cells.is_empty():
@@ -735,39 +829,24 @@ func _focus_camera_on_cells(cells: Array[Vector2i], surfaces: Array) -> void:
 	cam.global_position = accum / float(count)
 	_camera_centered_by_spawn = true
 
-# Thin rim highlight on coasts
-func _coastline_rim(x: int, y: int, z_surf: int) -> void:
-	if not _water_active:
-		return
-	if is_water_column(x, y):
-		return
-	var n_water := false
-	if x > 0 and is_water_column(x - 1, y): n_water = true
-	if x < W - 1 and is_water_column(x + 1, y): n_water = true
-	if y > 0 and is_water_column(x, y - 1): n_water = true
-	if y < H - 1 and is_water_column(x, y + 1): n_water = true
-	if not n_water:
-		return
+func _cluster_center_cell(cells: Array[Vector2i]) -> Vector2i:
+	if cells.is_empty():
+		return Vector2i(W >> 1, H >> 1)
+	var accum_x := 0.0
+	var accum_y := 0.0
+	for cell_variant in cells:
+		var cell: Vector2i = cell_variant
+		accum_x += float(cell.x)
+		accum_y += float(cell.y)
+	var inv := 1.0 / float(max(1, cells.size()))
+	var dims := get_dimensions()
+	var cx := clampi(int(round(accum_x * inv)), 0, max(0, dims.x - 1))
+	var cy := clampi(int(round(accum_y * inv)), 0, max(0, dims.y - 1))
+	return Vector2i(cx, cy)
 
-	var atlas_xy := _grassy_dirt_atlas()
-	if _atlas_src == null or _atlas_tex == null:
-		return
-	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
-	if region.size == Vector2i.ZERO:
-		return
-	var sp := Sprite2D.new()
-	sp.texture = _atlas_tex
-	sp.region_enabled = true
-	sp.region_rect = Rect2(region.position, region.size)
-	sp.scale = Vector2(1.0, 0.06)
-	sp.modulate = Color(1.0, 1.0, 0.85, 0.85)
-	var p := project_iso3d(float(x), float(y), float(z_surf))
-	var anchor := Vector2(_tile_w * 0.5, _tile_h)
-	sp.position = p - Vector2(anchor.x, anchor.y * 0.75)  # sit slightly above top face
-	sp.centered = false
-	sp.z_as_relative = false
-	sp.z_index = sort_key(x, y, max(z_surf, SEA_Z))
-	draw_root.add_child(sp)
+func _random_redshirt_radius() -> int:
+	var jitter := (randi_range(-REDSHIRT_WANDER_RADIUS_JITTER, REDSHIRT_WANDER_RADIUS_JITTER) if REDSHIRT_WANDER_RADIUS_JITTER > 0 else 0)
+	return max(1, REDSHIRT_WANDER_RADIUS + jitter)
 
 func _regenerate_object_layers(reseed_boulders: bool) -> void:
 	var trees: TreeGen = _get_tree_gen()
