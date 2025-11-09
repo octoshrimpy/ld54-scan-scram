@@ -15,11 +15,13 @@ var _map: Node
 var _grid: AStarGrid2D = AStarGrid2D.new()
 var _region: Rect2i = Rect2i()
 var _height_cache: Dictionary = {}
+var _map_signal_owner: Node
 
 func configure(map_ref: Node, region: Rect2i) -> void:
 	_map = map_ref
 	_region = region
 	_height_cache.clear()
+	_bind_map_signals(_map)
 	_setup_grid()
 	_bake_walkable_mask()
 	_apply_height_rules()
@@ -38,6 +40,7 @@ func set_region(region: Rect2i) -> void:
 
 func set_map(map_ref: Node) -> void:
 	_map = map_ref
+	_bind_map_signals(_map)
 	rebuild()
 
 func has_point(cell: Vector2i) -> bool:
@@ -169,3 +172,25 @@ func _weight_for_cell(cell: Vector2i) -> float:
 		return 1.0
 	var height := _height_at(cell)
 	return 1.0 + 0.01 * float(max(0, height))
+
+func _bind_map_signals(map_ref: Node) -> void:
+	_unbind_map_signals()
+	if map_ref == null or not is_instance_valid(map_ref):
+		return
+	if map_ref.has_signal("map_rebuilt"):
+		var cb := Callable(self, "_on_map_rebuilt")
+		if not map_ref.map_rebuilt.is_connected(cb):
+			map_ref.map_rebuilt.connect(cb, CONNECT_REFERENCE_COUNTED)
+	_map_signal_owner = map_ref
+
+func _unbind_map_signals() -> void:
+	if _map_signal_owner == null or not is_instance_valid(_map_signal_owner):
+		_map_signal_owner = null
+		return
+	var cb := Callable(self, "_on_map_rebuilt")
+	if _map_signal_owner.has_signal("map_rebuilt") and _map_signal_owner.map_rebuilt.is_connected(cb):
+		_map_signal_owner.map_rebuilt.disconnect(cb)
+	_map_signal_owner = null
+
+func _on_map_rebuilt() -> void:
+	rebuild()

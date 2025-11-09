@@ -88,10 +88,10 @@ func handle_dressing_highlight(cell: Vector2i) -> void:
 	_set_global_wander_radius(_map.REDSHIRT_WANDER_RADIUS_CLICK)
 	_move_redshirt_focus(cell)
 
-func set_seed(seed: int) -> void:
-	_rng.seed = seed
+func set_seed(new_seed: int) -> void:
+	_rng.seed = new_seed
 	if _spawner != null and _spawner.has_method("set_seed"):
-		_spawner.set_seed(seed ^ 0x9E3779B9)
+		_spawner.set_seed(new_seed ^ 0x9E3779B9)
 
 func _schedule_redshirt_beam(center_cell: Vector2i, pending: Array, positions: Array[Vector2i], surfaces: Array) -> void:
 	var pending_copy: Array = []

@@ -20,8 +20,8 @@ var _rng := RandomNumberGenerator.new()
 func _init() -> void:
 	_rng.randomize()
 
-func set_seed(seed: int) -> void:
-	_rng.seed = seed
+func set_seed(new_seed: int) -> void:
+	_rng.seed = new_seed
 
 func spawn_redshirts(
 	_place_sprite: Callable,

@@ -744,8 +744,8 @@ func regenerate_for_new_slice() -> void:
 	_refresh_cell_classes()
 	_regenerate_forest()
 
-func set_seed(seed: int) -> void:
-	_rng.seed = seed
+func set_seed(new_seed: int) -> void:
+	_rng.seed = new_seed
 
 func _regenerate_forest() -> void:
 	# Clear previous baked sprites (and any leftovers)

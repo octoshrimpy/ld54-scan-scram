@@ -111,6 +111,8 @@ func set_navigation_grid(nav: NavigationGridRef, owns_navigation: bool = false) 
 		return
 	if owns_navigation:
 		_sync_agent_preferences()
+	if _map != null:
+		_nav.set_map(_map)
 
 func rebuild_navigation(region: Rect2i = Rect2i()) -> void:
 	if _nav == null:
@@ -192,6 +194,8 @@ func _setup_navigation() -> void:
 	if navigation_grid != null:
 		_nav = navigation_grid
 		_owns_navigation = false
+		if _map != null:
+			_nav.set_map(_map)
 	elif auto_build_navigation:
 		var dims := _resolve_map_dimensions()
 		if dims == Vector2i.ZERO or _map == null:

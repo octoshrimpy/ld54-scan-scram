@@ -136,8 +136,8 @@ func regenerate_boulders(reseed: bool = false) -> void:
 	else:
 		_regenerate_boulders()
 
-func set_seed(seed: int) -> void:
-	_rng.seed = seed
+func set_seed(new_seed: int) -> void:
+	_rng.seed = new_seed
 
 func set_tile_region(min_corner: Vector2i, max_corner: Vector2i) -> void:
 	tile_min = min_corner
