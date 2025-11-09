@@ -9,10 +9,11 @@ extends Node2D
 
 signal map_rebuild_started
 signal map_rebuild_finished
+signal map_rebuilt
 
 const MapUtilsRef := preload("res://utils/map_utils.gd")
-const RedshirtSystem := preload("res://utils/redshirt_system.gd")
-const TerrainBuilder := preload("res://utils/terrain_builder.gd")
+const RedshirtSystemScript := preload("res://utils/redshirt_system.gd")
+const TerrainBuilderScript := preload("res://utils/terrain_builder.gd")
 
 # ── Scene refs ────────────────────────────────────────────────────────────────
 @onready var cam: Camera2D = $Camera2D
@@ -215,7 +216,7 @@ func _setup_draw_root() -> void:
 
 func _ensure_redshirt_system() -> void:
 	if _redshirt_system == null:
-		_redshirt_system = RedshirtSystem.new()
+		_redshirt_system = RedshirtSystemScript.new()
 		_redshirt_system.setup(self)
 	if draw_root != null:
 		_redshirt_system.set_draw_root(draw_root)
@@ -224,7 +225,7 @@ func _ensure_redshirt_system() -> void:
 
 func _ensure_terrain_builder() -> void:
 	if _terrain_builder == null:
-		_terrain_builder = TerrainBuilder.new()
+		_terrain_builder = TerrainBuilderScript.new()
 		_terrain_builder.setup(self)
 
 func _apply_slice_seed() -> void:
@@ -653,6 +654,7 @@ func _rebuild(new_seed: int = -1) -> void:
 		_redshirt_system.refresh_focus_indicator()
 	_bind_dressing_signals()
 	map_rebuild_finished.emit()
+	map_rebuilt.emit()
 
 # ── main build (per-column surface, fill below, water where air≤sea) ──────────
 const SEA_Z := 0

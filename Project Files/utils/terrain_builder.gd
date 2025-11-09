@@ -19,14 +19,14 @@ func setup(map_ref: PlanetMap) -> void:
 	map = map_ref
 	_configure_noises()
 
-func apply_seed(seed: int) -> void:
-	top_noise.seed = seed ^ 0xABCDEF01
-	carpet_noise.seed = seed ^ 0xBADC0DED
-	grad_noise.seed = seed ^ 0x13579BDF
-	height_u1.seed = seed ^ 0x0F0F0F0F
-	height_u2.seed = seed ^ 0xF00DFACE
-	detail_noise.seed = seed ^ 0x2468ACE1
-	_rng.seed = seed ^ 0x5BD1E995
+func apply_seed(new_seed: int) -> void:
+	top_noise.seed = new_seed ^ 0xABCDEF01
+	carpet_noise.seed = new_seed ^ 0xBADC0DED
+	grad_noise.seed = new_seed ^ 0x13579BDF
+	height_u1.seed = new_seed ^ 0x0F0F0F0F
+	height_u2.seed = new_seed ^ 0xF00DFACE
+	detail_noise.seed = new_seed ^ 0x2468ACE1
+	_rng.seed = new_seed ^ 0x5BD1E995
 
 func build_terrain() -> Array:
 	_water_columns.clear()

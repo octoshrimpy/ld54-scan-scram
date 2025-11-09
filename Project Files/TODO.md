@@ -37,6 +37,6 @@
 - [x] Thread `PlanetMap.rng_seed` into `TreeGen`, `BoulderGen`, and `RedshirtSpawner` so new slices are reproducible—each generator currently randomizes independently via global RNG, making a saved seed insufficient to recreate a planet's dressing.
 
 ## Tech Debt – Navigation & Controls
-- [ ] Have `PlanetMap` emit a `map_rebuilt` signal and let `NavigationGrid` / `PathfindingAgent` listen so cached walkability masks and path targets rebuild automatically instead of pathing on stale grids after a new slice.
+- [x] Have `PlanetMap` emit a `map_rebuilt` signal and let `NavigationGrid` / `PathfindingAgent` listen so cached walkability masks and path targets rebuild automatically instead of pathing on stale grids after a new slice.
 - [x] Implement a proper iso-to-grid `world_to_cell()` helper (either on `PlanetMap` or `NavigationGrid`) so `PathfindingAgent.world_to_cell()` stops brute-forcing every cell in the region on each call (`utils/pathfinding_agent.gd`).
 - [ ] Give redshirts proper A* pathfinding (shared nav grid, deterministic walkability masks) so they route around obstacles instead of relying on random wandering.
