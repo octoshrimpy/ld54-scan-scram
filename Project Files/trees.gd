@@ -3,8 +3,11 @@
 class_name TreeGen
 extends Node2D
 
-# const TreeOutlineFactory := preload("res://addons/outline/TreeOutlineFactory.gd")
+signal highlight_clicked(cell: Vector2i, world_position: Vector2, source: StringName)
+
+const TreeOutlineFactoryScript := preload("res://addons/outline/TreeOutlineFactory.gd")
 const MapUtilsRef := preload("res://utils/map_utils.gd")
+const TREE_SOURCE := &"trees"
 
 enum CellClass {
 	LAND,
@@ -29,6 +32,14 @@ const CELL_CLASS_NAMES := {
 @export var W: int = 20
 @export var H: int = 20
 @export var SOURCE_ID: int = 0
+
+# ───────────────────────────── Outline controls ──────────────────────────────
+@export var outline_color: Color = Color(0.08, 0.78, 0.52, 0.85)
+@export_range(0, 8, 1) var outline_thickness_px: int = 1
+@export_range(0, 16, 1) var outline_padding_px: int = 3
+@export var outline_hover_margin_px: float = 0.0
+@export var outlines_hover_only: bool = true
+@export_range(0.0, 1.0, 0.01) var outline_hover_alpha_threshold: float = 0.65
 
 # ─────────────────────────── GROVE DISTRIBUTION ───────────────────────────────
 @export var grove_count_min: int = 3
@@ -243,6 +254,8 @@ const TREE_SPECIES: Array[Dictionary] = [
 	}
 ]
 
+var _rng := RandomNumberGenerator.new()
+
 const SPECIES_PROPERTY_KEYS := [
 	"trunk_total_px_min",
 	"trunk_total_px_max",
@@ -299,6 +312,8 @@ var _shoreline_land_cells: Array[Vector2i] = []
 var _shoreline_water_cells: Array[Vector2i] = []
 var _water_cells: Array[Vector2i] = []
 var _leaf_wiggle_material: ShaderMaterial
+var _outline_factory: TreeOutlineFactory
+var _occupied_cells: Array[Vector2i] = []
 
 # helper records
 class GroundSpawn:
@@ -317,11 +332,13 @@ class Grove:
 
 # ───────────────────────────── Lifecycle ──────────────────────────────────────
 func _ready() -> void:
+	_rng.randomize()
 	if trunks_root == null:
 		trunks_root = self
 	_map_cache = _resolve_map()
 	_cache_base_species_config()
 	_setup_leaf_material()
+	_outline_factory = TreeOutlineFactoryScript.new()
 	_regenerate_forest()
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -353,7 +370,7 @@ func _setup_leaf_material() -> void:
 	_leaf_wiggle_material.set_shader_parameter("noise_mix", 0.4)
 	_leaf_wiggle_material.set_shader_parameter("world_phase_scale", Vector2(0.03, 0.03))
 	_leaf_wiggle_material.set_shader_parameter("base_phase", 0.65)
-	var wind_dir := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
+	var wind_dir := Vector2(_randf_range(-1.0, 1.0), _randf_range(-1.0, 1.0))
 	if wind_dir.length_squared() < 0.0001:
 		wind_dir = Vector2(0.7, 0.2)
 	else:
@@ -361,13 +378,23 @@ func _setup_leaf_material() -> void:
 	_leaf_wiggle_material.set_shader_parameter("wind_noise_scale", Vector2(0.006, 0.01))
 	_leaf_wiggle_material.set_shader_parameter(
 		"wind_noise_offset",
-		Vector2(randf_range(-500.0, 500.0), randf_range(-500.0, 500.0))
+		Vector2(_randf_range(-500.0, 500.0), _randf_range(-500.0, 500.0))
 	)
 	_leaf_wiggle_material.set_shader_parameter("wind_scroll_dir", wind_dir)
-	_leaf_wiggle_material.set_shader_parameter("wind_scroll_speed", randf_range(0.05, 0.18))
+	_leaf_wiggle_material.set_shader_parameter("wind_scroll_speed", _randf_range(0.05, 0.18))
 	_leaf_wiggle_material.set_shader_parameter("wind_strength", 0.6)
 	_leaf_wiggle_material.set_shader_parameter("wind_min_strength", 0.12)
 	_leaf_wiggle_material.set_shader_parameter("wind_axis_mix", 0.9)
+
+func _configure_outline_factory() -> void:
+	if _outline_factory == null:
+		_outline_factory = TreeOutlineFactoryScript.new()
+	_outline_factory.outline_color = outline_color
+	_outline_factory.outline_thickness_px = outline_thickness_px
+	_outline_factory.padding_px = outline_padding_px
+	_outline_factory.hover_margin_px = outline_hover_margin_px
+	_outline_factory.hover_only = outlines_hover_only
+	_outline_factory.hover_alpha_threshold = outline_hover_alpha_threshold
 
 func _apply_species_overrides(overrides: Dictionary) -> void:
 	if overrides.is_empty():
@@ -577,8 +604,8 @@ func _pick_weighted_candidate(candidates: Array) -> Dictionary:
 	for item in candidates:
 		total_weight += float(item.get("weight", 1.0))
 	if total_weight <= 0.0:
-		return candidates[randi_range(0, candidates.size() - 1)]
-	var roll: float = randf() * total_weight
+		return candidates[_randi_range(0, candidates.size() - 1)]
+	var roll: float = _randf() * total_weight
 	for item in candidates:
 		roll -= float(item.get("weight", 1.0))
 		if roll <= 0.0:
@@ -717,11 +744,15 @@ func regenerate_for_new_slice() -> void:
 	_refresh_cell_classes()
 	_regenerate_forest()
 
+func set_seed(seed: int) -> void:
+	_rng.seed = seed
+
 func _regenerate_forest() -> void:
 	# Clear previous baked sprites (and any leftovers)
 	for c in trunks_root.get_children():
 		if c is Sprite2D or c is Node2D:
 			c.queue_free()
+	_occupied_cells.clear()
 
 	_map_cache = _resolve_map()
 
@@ -774,8 +805,8 @@ func _regenerate_forest() -> void:
 	# Build trees
 	for g in groves:
 		for i in range(g.tree_count):
-			var t: float = randf() * TAU
-			var r_cells: float = sqrt(randf()) * float(g.radius_cells)
+			var t: float = _randf() * TAU
+			var r_cells: float = sqrt(_randf()) * float(g.radius_cells)
 			var ox_i: int = int(round(cos(t) * r_cells))
 			var oy_i: int = int(round(sin(t) * r_cells))
 			var cell := Vector2i(clampi(g.center_cell.x + ox_i, 0, W - 1), clampi(g.center_cell.y + oy_i, 0, H - 1))
@@ -791,14 +822,15 @@ func _regenerate_forest() -> void:
 			_apply_species_overrides(species.get("overrides", {}) as Dictionary)
 			_current_species_id = species.get("id", DEFAULT_SPECIES_ID)
 
-			_trunk_total_px = clampi(randi_range(trunk_total_px_min, trunk_total_px_max), 4, 4096)
-			_trunk_width_px = clampi(randi_range(trunk_width_px_min, trunk_width_px_max), 1, 4096)
+			_trunk_total_px = clampi(_randi_range(trunk_total_px_min, trunk_total_px_max), 4, 4096)
+			_trunk_width_px = clampi(_randi_range(trunk_width_px_min, trunk_width_px_max), 1, 4096)
 
 			_build_tree_at(spawn, g.bark_region, g.leaf_region)
 			_restore_base_species_config()
 	_restore_base_species_config()
 	_spawn_shoreline_trees()
 	_restore_base_species_config()
+	_publish_obstacles()
 
 # ─────────────────────────── Grove planning helpers ───────────────────────────
 func _spawn_shoreline_trees() -> void:
@@ -828,7 +860,7 @@ func _spawn_shoreline_trees() -> void:
 	var tries: int = 0
 	while placed < want and tries < attempts:
 		tries += 1
-		var cell_idx: int = randi_range(0, pool.size() - 1)
+		var cell_idx: int = _randi_range(0, pool.size() - 1)
 		var cell: Vector2i = pool[cell_idx]
 		var species_info: Dictionary = _select_species_for_cell(cell, "water")
 		if species_info.is_empty():
@@ -846,15 +878,42 @@ func _spawn_shoreline_trees() -> void:
 		_restore_base_species_config()
 		placed += 1
 
+func _publish_obstacles() -> void:
+	var map := _get_map()
+	if map == null:
+		return
+	if not map.has_method("register_obstacle_cells"):
+		return
+	var payload: Array[Vector2i] = []
+	for cell_variant in _occupied_cells:
+		var cell: Vector2i = cell_variant
+		payload.append(cell)
+	map.call("register_obstacle_cells", TREE_SOURCE, payload)
+
+func _on_hover_outline_clicked(metadata: Dictionary) -> void:
+	var cell_variant: Variant = metadata.get("cell", Vector2i.ZERO)
+	var world_variant: Variant = metadata.get("world", Vector2.ZERO)
+	var source_variant: Variant = metadata.get("source", TREE_SOURCE)
+	var cell: Vector2i = Vector2i.ZERO
+	if cell_variant is Vector2i:
+		cell = cell_variant
+	var world: Vector2 = Vector2.ZERO
+	if world_variant is Vector2:
+		world = world_variant
+	var source: StringName = TREE_SOURCE
+	if source_variant is StringName:
+		source = source_variant
+	emit_signal("highlight_clicked", cell, world, source)
+
 func _plan_groves(spacing_cells: int, slope_allow: int, grass_required: bool, attempts: int) -> Array[Grove]:
 	var groves: Array[Grove] = []
-	var want: int = clampi(randi_range(grove_count_min, grove_count_max), 1, 64)
+	var want: int = clampi(_randi_range(grove_count_min, grove_count_max), 1, 64)
 	var margin: int = clampi(spawn_margin_cells, 0, min(W, H) / 2)
 	var tries: int = 0
 	while groves.size() < want and tries < attempts:
 		tries += 1
-		var x: int = randi_range(margin, max(margin, W - 1 - margin))
-		var y: int = randi_range(margin, max(margin, H - 1 - margin))
+		var x: int = _randi_range(margin, max(margin, W - 1 - margin))
+		var y: int = _randi_range(margin, max(margin, H - 1 - margin))
 
 		var ok_space := true
 		for g in groves:
@@ -895,8 +954,8 @@ func _plan_groves(spacing_cells: int, slope_allow: int, grass_required: bool, at
 		g.center_cell = Vector2i(x, y)
 		g.center_world = pos
 		g.z = z
-		g.radius_cells = clampi(randi_range(grove_radius_cells_min, grove_radius_cells_max), 1, 64)
-		g.tree_count = clampi(randi_range(trees_per_grove_min, trees_per_grove_max), 1, 256)
+		g.radius_cells = clampi(_randi_range(grove_radius_cells_min, grove_radius_cells_max), 1, 64)
+		g.tree_count = clampi(_randi_range(trees_per_grove_min, trees_per_grove_max), 1, 256)
 		g.bark_region = _choose_bark_region()
 		g.leaf_region = _choose_leaf_subtile_region(_choose_one_leaf_tile())
 		if g.bark_region.size != Vector2i.ZERO and g.leaf_region.size != Vector2i.ZERO:
@@ -908,8 +967,8 @@ func _choose_bark_region() -> Rect2i:
 	return _atlas_src.get_tile_texture_region(_choose_bark_tile())
 
 func _choose_bark_tile() -> Vector2i:
-	var bx: int = randi_range(min(bark_x_range.x, bark_x_range.y), max(bark_x_range.x, bark_x_range.y))
-	var by: int = randi_range(min(bark_y_range.x, bark_y_range.y), max(bark_y_range.x, bark_y_range.y))
+	var bx: int = _randi_range(min(bark_x_range.x, bark_x_range.y), max(bark_x_range.x, bark_x_range.y))
+	var by: int = _randi_range(min(bark_y_range.x, bark_y_range.y), max(bark_y_range.x, bark_y_range.y))
 	return Vector2i(bx, by)
 
 func _choose_one_leaf_tile() -> Vector2i:
@@ -924,7 +983,7 @@ func _choose_one_leaf_tile() -> Vector2i:
 				pool.append(Vector2i(tx, ty))
 	if pool.is_empty():
 		return Vector2i(56, 56)
-	return pool[randi_range(0, pool.size() - 1)]
+	return pool[_randi_range(0, pool.size() - 1)]
 
 func _choose_leaf_subtile_region(tile_xy: Vector2i) -> Rect2i:
 	var full: Rect2i = _atlas_src.get_tile_texture_region(tile_xy)
@@ -932,7 +991,7 @@ func _choose_leaf_subtile_region(tile_xy: Vector2i) -> Rect2i:
 		return full
 	var cols: int = max(1, leaf_subtile_cols)
 	var rows: int = max(1, leaf_subtile_rows)
-	var pick: int = randi_range(0, cols * rows - 1)
+	var pick: int = _randi_range(0, cols * rows - 1)
 	var c_idx: int = pick % cols
 	var r_idx: int = int(floor(float(pick) / float(cols)))
 	var sub_w: int = max(1, int(floor(float(full.size.x) / float(cols))))
@@ -1002,8 +1061,8 @@ func _find_nearby_ground(target: Vector2i, tries: int, allow_water: bool = false
 		require_grass_now = bool(require_grass_override)
 
 	for _i in range(tries):
-		var rx: int = randi_range(-2, 2)
-		var ry: int = randi_range(-2, 2)
+		var rx: int = _randi_range(-2, 2)
+		var ry: int = _randi_range(-2, 2)
 		var cx: int = clampi(target.x + rx, margin, W - 1 - margin)
 		var cy: int = clampi(target.y + ry, margin, H - 1 - margin)
 		var z: int = _map_surface_z(cx, cy)
@@ -1074,7 +1133,9 @@ func _fallback_center_spawn(allow_water: bool, require_water: bool, avoid_water_
 func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i) -> void:
 	# temp group: build full tree here, then bake+outline to a single sprite
 	var temp: Node2D = Node2D.new()
+	temp.visible = false
 	add_child(temp) # short-lived; baked and freed
+	_occupied_cells.append(spawn.cell)
 
 	var bottom_world: Vector2 = spawn.position
 	var tile_h_px: int = bark_region.size.y
@@ -1089,13 +1150,13 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 	var max_px: int = int(_trunk_total_px * clamp(branch_zone_max, 0.0, 1.0))
 	if max_px <= min_px:
 		max_px = min_px + 1
-	var want_count: int = clampi(randi_range(branch_count_min, branch_count_max), 0, 64)
+	var want_count: int = clampi(_randi_range(branch_count_min, branch_count_max), 0, 64)
 
 	var branch_targets: Array[int] = []
 	var guard: int = 0
 	while branch_targets.size() < want_count and guard < 200:
 		guard += 1
-		var y_try: int = randi_range(min_px, max_px)
+		var y_try: int = _randi_range(min_px, max_px)
 		var ok: bool = true
 		for y_exist in branch_targets:
 			if abs(y_exist - y_try) < branch_min_gap_px:
@@ -1107,7 +1168,7 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 
 	var branch_lengths: Array[int] = []
 	for _i in range(branch_targets.size()):
-		branch_lengths.append(clampi(randi_range(branch_length_min_px, branch_length_max_px), 3, 999))
+		branch_lengths.append(clampi(_randi_range(branch_length_min_px, branch_length_max_px), 3, 999))
 
 	var next_branch_idx: int = 0
 	var next_branch_px: int = (branch_targets[next_branch_idx] if branch_targets.size() > 0 else 1 << 30)
@@ -1119,11 +1180,11 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 	var built_px: int = 0
 
 	while built_px < _trunk_total_px:
-		var seg_h: int = min(randi_range(2, 3), _trunk_total_px - built_px)
+		var seg_h: int = min(_randi_range(2, 3), _trunk_total_px - built_px)
 
 		# wobble
-		if randf() < wiggle_prob:
-			var r: float = randf() * 2.0 - 1.0
+		if _randf() < wiggle_prob:
+			var r: float = _randf() * 2.0 - 1.0
 			var biased: float = r + clamp(wiggle_bias, -1.0, 1.0)
 			var move: int = (1 if biased > 0.33 else (-1 if biased < -0.33 else 0))
 			lateral = clampi(lateral + move, -max_lateral_px, max_lateral_px)
@@ -1131,7 +1192,7 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 		# sample bark rows
 		var cycle_i: int = built_px % tile_h_px
 		var base_row: int = tile_h_px - 1 - cycle_i
-		var rand_step: int = randi_range(0, 2)
+		var rand_step: int = _randi_range(0, 2)
 		var start_row: int = clampi(base_row - rand_step - (seg_h - 1), 0, tile_h_px - seg_h)
 		var sample_y: int = bark_region.position.y + start_row
 		var region_rect: Rect2 = Rect2(Vector2(slice_x, sample_y), Vector2(usable_width, seg_h))
@@ -1165,7 +1226,7 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 				side = branch_side
 			else:
 				var p_right: float = 0.5 + clamp(branch_side_bias, -1.0, 1.0) * 0.5
-				side = (1 if randf() < p_right else -1)
+				side = (1 if _randf() < p_right else -1)
 
 			var this_len: int = branch_lengths[next_branch_idx]
 			_spawn_branch(temp, Vector2(origin_x_world, origin_y_world), spawn, side, this_len, bark_region, leaf_region, anchors)
@@ -1185,7 +1246,16 @@ func _build_tree_at(spawn: GroundSpawn, bark_region: Rect2i, leaf_region: Rect2i
 	_spawn_leaf_clump_connected(temp, crown_center, spawn, crown.count, leaf_region, crown.radius, anchors)
 
 	# ── Bake outlined sprite and clean up temp ────────────────────────────────
-	_outline_entire_tree(temp, spawn)
+	var meta := {
+		"cell": spawn.cell,
+		"world": spawn.position,
+		"source": TREE_SOURCE
+	}
+	var hover_sprite := _outline_entire_tree(temp, spawn, meta)
+	if hover_sprite != null:
+		var cb := Callable(self, "_on_hover_outline_clicked")
+		if not hover_sprite.outline_clicked.is_connected(cb):
+			hover_sprite.outline_clicked.connect(cb, CONNECT_REFERENCE_COUNTED)
 
 # ─────────────────────────── Branch + foliage spawn ───────────────────────────
 func _spawn_branch(temp: Node2D, origin_world: Vector2, spawn: GroundSpawn, dir: int, branch_len_px: int, bark_region: Rect2i, leaf_region: Rect2i, anchors: Array[Rect2]) -> void:
@@ -1202,12 +1272,12 @@ func _spawn_branch(temp: Node2D, origin_world: Vector2, spawn: GroundSpawn, dir:
 	var tip_cx: float = origin_world.x
 	var tip_y: float = origin_world.y
 
-	var place_single: bool = (randf() < leaf_single_on_branch_chance)
-	var single_t: float = randf() if place_single else 0.0
+	var place_single: bool = (_randf() < leaf_single_on_branch_chance)
+	var single_t: float = _randf() if place_single else 0.0
 	var single_done: bool = false
 
 	while placed_px < branch_len_px:
-		var seg_h_raw: int = min(randi_range(branch_step_h_px.x, branch_step_h_px.y), branch_len_px - placed_px)
+		var seg_h_raw: int = min(_randi_range(branch_step_h_px.x, branch_step_h_px.y), branch_len_px - placed_px)
 		var seg_h: int = max(2, seg_h_raw)
 
 		var width_now: int
@@ -1222,12 +1292,12 @@ func _spawn_branch(temp: Node2D, origin_world: Vector2, spawn: GroundSpawn, dir:
 
 		var cycle_i: int = placed_px % tile_h_px
 		var base_row: int = tile_h_px - 1 - cycle_i
-		var rand_step: int = randi_range(0, 2)
+		var rand_step: int = _randi_range(0, 2)
 		var start_row: int = clampi(base_row - rand_step - (seg_h - 1), 0, tile_h_px - seg_h)
 		var sample_y: int = bark_region.position.y + start_row
 		var region_rect: Rect2 = Rect2(Vector2(local_slice_x, sample_y), Vector2(width_now, seg_h))
 
-		var jitter: int = randi_range(-branch_dev_px, branch_dev_px)
+		var jitter: int = _randi_range(-branch_dev_px, branch_dev_px)
 		var base_shift: int = dir * (branch_shift_px * (step_idx + 1))
 		var dx: float = float(base_shift + jitter)
 		if step_idx == 0:
@@ -1280,7 +1350,7 @@ func _spawn_branch(temp: Node2D, origin_world: Vector2, spawn: GroundSpawn, dir:
 		step_idx += 1
 
 	var tip_center: Vector2 = Vector2(tip_cx, tip_y - float(leaf_tip_offset_up_px))
-	var tip_count: int = randi_range(leaf_tip_count_min, leaf_tip_count_max)
+	var tip_count: int = _randi_range(leaf_tip_count_min, leaf_tip_count_max)
 	_spawn_leaf_clump_connected(temp, tip_center, spawn, tip_count, leaf_region, leaf_tip_radius_px, anchors)
 
 # ────────────────────────────── Foliage helpers (connected) ───────────────────
@@ -1366,9 +1436,9 @@ func _try_connected_leaf(temp: Node2D, center_world: Vector2, spawn: GroundSpawn
 
 	# 1) Random attempts within disc, but require a minimum overlap (not just touch)
 	for _i in range(max(1, leaf_connect_attempts)):
-		var ox: int = randi_range(-radius_px, radius_px)
+		var ox: int = _randi_range(-radius_px, radius_px)
 		var max_y: int = int(sqrt(max(0.0, float(radius_px * radius_px - ox * ox))))
-		var oy: int = randi_range(-max_y, max_y)
+		var oy: int = _randi_range(-max_y, max_y)
 
 		var top_left := Vector2(
 			center_world.x + float(ox) - sz.x * 0.5,
@@ -1422,18 +1492,18 @@ func _spawn_leaf_clump_connected(temp: Node2D, center_world: Vector2, spawn: Gro
 		_try_connected_leaf(temp, center_world, spawn, leaf_region, radius_px, anchors)
 
 # ────────────────────────────── Outline bake per tree ─────────────────────────
-func _outline_entire_tree(_temp: Node2D, spawn: GroundSpawn) -> void:
-	# Create a transient factory, bake, parent result under trunks_root, free temp+factory
-	# var factory: TreeOutlineFactory = TreeOutlineFactory.new()
-	# add_child(factory)
+func _outline_entire_tree(temp: Node2D, spawn: GroundSpawn, metadata: Dictionary) -> HoverOutlineSprite:
+	if temp == null:
+		return null
+	_configure_outline_factory()
+	var z_final: int = _sort_key(spawn.cell.x, spawn.cell.y, spawn.z + leaves_z_offset + 1)
+	return _outline_factory.bake_group(temp, _atlas_image, trunks_root, z_final, metadata)
 
-	var _z_final: int = _sort_key(spawn.cell.x, spawn.cell.y, spawn.z + leaves_z_offset + 1)
-	# var _outlined: Sprite2D = await factory.bake_tree(
-	# 	temp,               # group containing ALL sprites for this tree
-	# 	spawn.position,     # bottom-center anchor in world
-	# 	z_final,            # final z-index
-	# 	trunks_root         # parent for output
-	# )
+func _randf() -> float:
+	return _rng.randf()
 
-	# factory.queue_free()
-	# temp is freed inside bake_tree()
+func _randf_range(min_value: float, max_value: float) -> float:
+	return _rng.randf_range(min_value, max_value)
+
+func _randi_range(min_value: int, max_value: int) -> int:
+	return _rng.randi_range(min_value, max_value)

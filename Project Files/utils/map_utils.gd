@@ -23,7 +23,9 @@ static func column_bottom_world(map: Node, x: int, y: int, z: int) -> Vector2:
 	return project_iso3d(map, float(x), float(y), float(z))
 
 static func sort_key(x: int, y: int, z: int) -> int:
-	var raw := y * 128 + x * 4 + z
+	# Order canvas items by projected screen Y (iso uses (x + y)) with per-tile uniqueness.
+	var diag := x + y
+	var raw := diag * 64 + x + z
 	var biased := raw - 4096
 	return clampi(biased, RenderingServer.CANVAS_ITEM_Z_MIN, RenderingServer.CANVAS_ITEM_Z_MAX)
 

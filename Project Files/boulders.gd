@@ -3,7 +3,12 @@
 extends TileMapLayer
 class_name BoulderGen
 
+signal highlight_clicked(cell: Vector2i, world_position: Vector2, source: StringName)
+
 const MapUtilsRef := preload("res://utils/map_utils.gd")
+const TreeOutlineFactoryScript := preload("res://addons/outline/TreeOutlineFactory.gd")
+const HoverOutlineSpriteScript := preload("res://addons/outline/hover_outline_sprite.gd")
+const BOULDER_SOURCE := &"boulders"
 
 # ───────────────────────── Scene / map wiring ─────────────────────────────────
 @export var map_ref: NodePath                    # node with surface_z_at(x,y) and _project_iso3d(x,y,z)
@@ -15,6 +20,14 @@ const MapUtilsRef := preload("res://utils/map_utils.gd")
 # Atlas rectangle of stone pieces (inclusive, atlas coords)
 @export var tile_min: Vector2i = Vector2i(55, 65)
 @export var tile_max: Vector2i = Vector2i(57, 68)
+
+# ───────────────────────────── Outline controls ──────────────────────────────
+@export var outline_color: Color = Color(0.92, 0.76, 0.55, 0.85)
+@export_range(0, 8, 1) var outline_thickness_px: int = 1
+@export_range(0, 16, 1) var outline_padding_px: int = 2
+@export var outline_hover_margin_px: float = 0.0
+@export var outlines_hover_only: bool = true
+@export_range(0.0, 1.0, 0.01) var outline_hover_alpha_threshold: float = 0.65
 
 # World/grid size (cells)
 @export var W: int = 20
@@ -31,7 +44,7 @@ const MapUtilsRef := preload("res://utils/map_utils.gd")
 @export var pieces_max: int = 9
 @export var unique_per_compound: bool = true     # ⟵ NEW: do not reuse the same tile in one compound
 @export var max_x_jitter_px: int = 10            # keep center within ±8 px (smallest piece is 8×8)
-@export var y_jitter_px: int = 3                 # small ±y jitter to interleave edges (0 = perfectly level)
+@export var y_jitter_px: int = 3                 # downward jitter to tuck edges (0 = perfectly level; never lifts sprites)
 
 # Sorting
 @export var rock_z_offset: int = 4               # above terrain at column
@@ -49,7 +62,10 @@ const MapUtilsRef := preload("res://utils/map_utils.gd")
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _atlas_src: TileSetAtlasSource
 var _atlas_tex: Texture2D
+var _atlas_image: Image
 var _map_cache: Node
+var _outline_factory: TreeOutlineFactory
+var _occupied_cells: Array[Vector2i] = []
 
 # ───────────────────────── Lifecycle ──────────────────────────────────────────
 func _enter_tree() -> void:
@@ -79,7 +95,24 @@ func _ready() -> void:
 	if _atlas_tex == null:
 		push_warning("BoulderGen: Atlas source has no texture.")
 		return
+	_atlas_image = _atlas_tex.get_image() if _atlas_tex != null else null
+	if _atlas_image != null and _atlas_image.is_compressed():
+		var err := _atlas_image.decompress()
+		if err != OK:
+			push_warning("BoulderGen: failed to decompress atlas image (%s)." % str(err))
+			_atlas_image = null
+	_outline_factory = TreeOutlineFactoryScript.new()
 	_place_boulders()
+
+func _configure_outline_factory() -> void:
+	if _outline_factory == null:
+		_outline_factory = TreeOutlineFactoryScript.new()
+	_outline_factory.outline_color = outline_color
+	_outline_factory.outline_thickness_px = outline_thickness_px
+	_outline_factory.padding_px = outline_padding_px
+	_outline_factory.hover_margin_px = outline_hover_margin_px
+	_outline_factory.hover_only = outlines_hover_only
+	_outline_factory.hover_alpha_threshold = outline_hover_alpha_threshold
 
 func _unhandled_input(e: InputEvent) -> void:
 	# Prefer named action…
@@ -103,6 +136,9 @@ func regenerate_boulders(reseed: bool = false) -> void:
 	else:
 		_regenerate_boulders()
 
+func set_seed(seed: int) -> void:
+	_rng.seed = seed
+
 func set_tile_region(min_corner: Vector2i, max_corner: Vector2i) -> void:
 	tile_min = min_corner
 	tile_max = max_corner
@@ -110,6 +146,7 @@ func set_tile_region(min_corner: Vector2i, max_corner: Vector2i) -> void:
 # ───────────────────────── Placement entrypoint ───────────────────────────────
 func _place_boulders() -> void:
 	_clear_existing()
+	_occupied_cells.clear()
 
 	# Collect all valid surface columns within margin
 	var half: int = (min(W, H)) >> 1
@@ -126,29 +163,31 @@ func _place_boulders() -> void:
 		push_warning("BoulderGen: no valid surface columns to place stones.")
 		return
 
-	columns.shuffle()
+	_shuffle_array(columns)
 	var want: int = clampi(_rng.randi_range(rock_count_min, rock_count_max), 0, columns.size())
 	for i in range(want):
 		var cell: Vector2i = columns[i]
 		var z: int = _map_surface_z(cell.x, cell.y)
 		var base_pos: Vector2 = _column_bottom_world(cell.x, cell.y, z) # bottom-center of column
 		_spawn_compound_at_world(base_pos, cell, z)
+	_publish_obstacles()
 
 # Remove previously spawned compounds
 func _clear_existing() -> void:
 	for c in boulders_root.get_children():
-		if c is Sprite2D and c.has_meta("is_boulder"):
+		if c is HoverOutlineSprite:
 			c.queue_free()
 
 # ───────────────────────── Compound stone (flat cluster) ──────────────────────
 func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) -> void:
 	if _atlas_src == null or _atlas_tex == null:
 		return
+	_occupied_cells.append(cell)
 
 	var all_tiles: Array[Vector2i] = _valid_tiles_in_rect(tile_min, tile_max)
 	if all_tiles.is_empty():
 		return
-	all_tiles.shuffle()
+	_shuffle_array(all_tiles)
 
 	var desired: int = clampi(_rng.randi_range(pieces_min, pieces_max), 1, 512)
 	var count: int = desired
@@ -157,6 +196,13 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 
 	var center_x: float = bottom_center.x
 	var ground_y: float = bottom_center.y
+	var compound_z := MapUtilsRef.sort_key(cell.x, cell.y, z + rock_z_offset)
+
+	var temp_group := Node2D.new()
+	temp_group.visible = false
+	temp_group.z_index = compound_z
+	temp_group.z_as_relative = false
+	boulders_root.add_child(temp_group)
 
 	for i in range(count):
 		var tile_xy: Vector2i
@@ -175,9 +221,9 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 		var w: int = region.size.x
 		var h: int = region.size.y
 
-		# Jitters: keep bottoms at same ground level; small ±y to tuck edges if desired.
+		# Jitters: keep bottoms at same ground level; vertical jitter only sinks stones to avoid floating.
 		var jx: int = _rng.randi_range(-max_x_jitter_px, max_x_jitter_px)
-		var jy: int = (_rng.randi_range(-y_jitter_px, y_jitter_px) if y_jitter_px > 0 else 0)
+		var jy: int = (_rng.randi_range(0, y_jitter_px) if y_jitter_px > 0 else 0)
 
 		var spr := Sprite2D.new()
 		spr.texture = _atlas_tex
@@ -186,15 +232,53 @@ func _spawn_compound_at_world(bottom_center: Vector2, cell: Vector2i, z: int) ->
 		spr.centered = false
 		spr.texture_filter = rock_filter
 		spr.z_as_relative = false
-		spr.z_index = MapUtilsRef.sort_key(cell.x, cell.y, z + rock_z_offset)
-		spr.set_meta("is_boulder", true)
-		boulders_root.add_child(spr)
+		spr.z_index = compound_z
+		temp_group.add_child(spr)
 
 		# Place: align piece bottom to the same ground level (compound = flat cluster)
 		var px: float = center_x + float(jx) - float(w) * 0.5
 		var py: float = ground_y - float(h) + float(jy)
 		var p := (Vector2(px, py).floor() if pixel_snap else Vector2(px, py))
 		spr.global_position = p
+
+	_configure_outline_factory()
+	var meta := {
+		"cell": cell,
+		"world": bottom_center,
+		"source": BOULDER_SOURCE
+	}
+	var hover_sprite := _outline_factory.bake_group(temp_group, _atlas_image, boulders_root, compound_z, meta)
+	if hover_sprite != null:
+		var cb := Callable(self, "_on_hover_outline_clicked")
+		if not hover_sprite.outline_clicked.is_connected(cb):
+			hover_sprite.outline_clicked.connect(cb, CONNECT_REFERENCE_COUNTED)
+
+func _publish_obstacles() -> void:
+	var map := _get_map()
+	if map == null:
+		return
+	if not map.has_method("register_obstacle_cells"):
+		return
+	var payload: Array[Vector2i] = []
+	for cell_variant in _occupied_cells:
+		var c: Vector2i = cell_variant
+		payload.append(c)
+	map.call("register_obstacle_cells", BOULDER_SOURCE, payload)
+
+func _on_hover_outline_clicked(metadata: Dictionary) -> void:
+	var cell_variant: Variant = metadata.get("cell", Vector2i.ZERO)
+	var world_variant: Variant = metadata.get("world", Vector2.ZERO)
+	var source_variant: Variant = metadata.get("source", BOULDER_SOURCE)
+	var cell: Vector2i = Vector2i.ZERO
+	if cell_variant is Vector2i:
+		cell = cell_variant
+	var world: Vector2 = Vector2.ZERO
+	if world_variant is Vector2:
+		world = world_variant
+	var source: StringName = BOULDER_SOURCE
+	if source_variant is StringName:
+		source = source_variant
+	emit_signal("highlight_clicked", cell, world, source)
 
 # ───────────────────────── Helpers: atlas tiles & map ─────────────────────────
 func _tiles_in_rect(p0: Vector2i, p1: Vector2i) -> Array[Vector2i]:
@@ -214,6 +298,13 @@ func _valid_tiles_in_rect(p0: Vector2i, p1: Vector2i) -> Array[Vector2i]:
 		if _atlas_src != null and _atlas_src.has_tile(tile_xy):
 			out.append(tile_xy)
 	return out
+
+func _shuffle_array(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = _rng.randi_range(0, i)
+		var temp: Variant = arr[i]
+		arr[i] = arr[j]
+		arr[j] = temp
 
 func _resolve_map() -> Node:
 	if map_ref.is_empty():

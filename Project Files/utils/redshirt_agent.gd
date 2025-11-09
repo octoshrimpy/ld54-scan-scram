@@ -58,6 +58,7 @@ var _texture_center: Vector2 = Vector2.ZERO
 var _map_signal_owner: Node
 var _wander_enabled: bool = true
 var _map_refresh_pending: bool = false
+var _returning_to_center: bool = false
 
 func configure(
 	map_ref: Node,
@@ -121,6 +122,11 @@ func _schedule_next_move() -> void:
 	if _move_timer and is_instance_valid(_move_timer):
 		if _move_timer.timeout.is_connected(_on_move_timer_timeout):
 			_move_timer.timeout.disconnect(_on_move_timer_timeout)
+	if _returning_to_center:
+		if (_active_tween != null) or (_hop_pause_timer != null):
+			return
+		_on_move_timer_timeout()
+		return
 	var wait_t := clampf(_rng.randf_range(_move_interval.x, _move_interval.y), 0.05, 10.0)
 	_move_timer = get_tree().create_timer(wait_t)
 	_move_timer.timeout.connect(_on_move_timer_timeout)
@@ -136,16 +142,38 @@ func _on_move_timer_timeout() -> void:
 	_move_to(next_cell)
 
 func _pick_next_step() -> Vector2i:
+	var enforce_return := not _within_wander_radius(_cell)
 	var options: Array[Vector2i] = []
+	var closer: Array[Vector2i] = []
+	var equal: Array[Vector2i] = []
+	var fallback: Array[Vector2i] = []
+	var current_dist: int = _chebyshev_distance(_cell, _wander_center)
 	for dir in CARDINAL_DIRS:
 		var candidate: Vector2i = _cell + dir
-		if not _within_wander_radius(candidate):
-			continue
 		if not _within_bounds(candidate):
 			continue
 		if not _can_step_to(candidate):
 			continue
+		if not enforce_return and not _within_wander_radius(candidate):
+			continue
+		if enforce_return:
+			var cand_dist := _chebyshev_distance(candidate, _wander_center)
+			if cand_dist < current_dist:
+				closer.append(candidate)
+			elif cand_dist == current_dist:
+				equal.append(candidate)
+			else:
+				fallback.append(candidate)
+			continue
 		options.append(candidate)
+	if enforce_return:
+		if not closer.is_empty():
+			return closer[_rng.randi_range(0, closer.size() - 1)]
+		if not equal.is_empty():
+			return equal[_rng.randi_range(0, equal.size() - 1)]
+		if not fallback.is_empty():
+			return fallback[_rng.randi_range(0, fallback.size() - 1)]
+		return _cell
 	if options.is_empty():
 		return _cell
 	return options[_rng.randi_range(0, options.size() - 1)]
@@ -161,9 +189,23 @@ func _within_wander_radius(cell: Vector2i) -> bool:
 	var dy: int = abs(cell.y - _wander_center.y)
 	return max(dx, dy) <= _wander_radius
 
+func set_wander_center(cell: Vector2i) -> void:
+	_wander_center = _clamp_cell_to_bounds(cell)
+	_begin_return_to_center()
+
+func set_wander_radius(radius: int) -> void:
+	var new_radius: int = max(1, radius)
+	if _wander_radius == new_radius:
+		return
+	_wander_radius = new_radius
+	_begin_return_to_center()
+
 func _can_step_to(target: Vector2i) -> bool:
 	if MapUtilsRef.column_has_water(_map_ref, target.x, target.y):
 		return false
+	if _map_ref != null and _map_ref.has_method("is_obstacle_cell"):
+		if bool(_map_ref.call("is_obstacle_cell", target.x, target.y)):
+			return false
 	var target_z := MapUtilsRef.surface_z(_map_ref, target.x, target.y, -1)
 	if target_z < 0:
 		return false
@@ -176,6 +218,16 @@ func _can_step_to(target: Vector2i) -> bool:
 	var current_top := _surface_top_z(_cell)
 	return abs(target_top - current_top) <= 1
 
+func _chebyshev_distance(a: Vector2i, b: Vector2i) -> int:
+	return max(abs(a.x - b.x), abs(a.y - b.y))
+
+func _begin_return_to_center() -> void:
+	if _within_wander_radius(_cell):
+		_returning_to_center = false
+		return
+	_returning_to_center = true
+	_schedule_next_move()
+
 func _move_to(target_cell: Vector2i) -> void:
 	var from_cell: Vector2i = _cell
 	if target_cell == from_cell:
@@ -183,6 +235,10 @@ func _move_to(target_cell: Vector2i) -> void:
 		return
 	var segments := _build_hop_segments(from_cell, target_cell)
 	_cell = target_cell
+	if _within_wander_radius(_cell):
+		_returning_to_center = false
+	else:
+		_returning_to_center = true
 	if _active_tween:
 		_active_tween.kill()
 		_active_tween = null

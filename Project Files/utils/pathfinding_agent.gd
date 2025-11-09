@@ -138,9 +138,9 @@ func world_to_cell(world: Vector2) -> Vector2i:
 		var candidate: Vector2i = _map.call("world_to_cell", offset_world)
 		if _nav == null:
 			return candidate
-		var snapped := _clamp_cell_to_nav(candidate)
-		if _nav.is_walkable(snapped):
-			return snapped
+		var clamped_cell := _clamp_cell_to_nav(candidate)
+		if _nav.is_walkable(clamped_cell):
+			return clamped_cell
 	if _nav == null:
 		return current_cell
 	return _brute_force_world_to_cell(offset_world)

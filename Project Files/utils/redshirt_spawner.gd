@@ -15,6 +15,14 @@ var _active_radius: int = 3
 const LAND_SAMPLE_MULTIPLIER: int = 8
 const LAND_SAMPLE_MIN: int = 36
 
+var _rng := RandomNumberGenerator.new()
+
+func _init() -> void:
+	_rng.randomize()
+
+func set_seed(seed: int) -> void:
+	_rng.seed = seed
+
 func spawn_redshirts(
 	_place_sprite: Callable,
 	is_water: Callable,
@@ -30,7 +38,7 @@ func spawn_redshirts(
 	if not is_water.is_valid():
 		return []
 
-	var target_count: int = randi_range(min_count, max_count)
+	var target_count: int = _rng.randi_range(min_count, max_count)
 	var flip_prob: float = clampf(flip_chance, 0.0, 1.0)
 
 	var land_cells: Array[Vector3i] = _collect_land_cells(is_water, surfaces, width, height, target_count)
@@ -49,7 +57,7 @@ func spawn_redshirts(
 		return []
 
 	if cluster.size() > target_count:
-		cluster.shuffle()
+		_shuffle_array(cluster)
 		cluster.resize(target_count)
 
 	var placements: Array[Dictionary] = []
@@ -66,7 +74,7 @@ func spawn_redshirts(
 			"pos": pos,
 			"z_top": z_top,
 			"atlas": _random_tile(),
-			"flip_h": randf() < flip_prob
+			"flip_h": _rng.randf() < flip_prob
 		})
 
 	return placements
@@ -86,8 +94,8 @@ func _collect_land_cells(
 		goal = min(goal, sample_goal)
 	if goal <= 0:
 		return cells
-	var start_y: int = (0 if height <= 0 else randi_range(0, max(0, height - 1)))
-	var start_x: int = (0 if width <= 0 else randi_range(0, max(0, width - 1)))
+	var start_y: int = (0 if height <= 0 else _rng.randi_range(0, max(0, height - 1)))
+	var start_x: int = (0 if width <= 0 else _rng.randi_range(0, max(0, width - 1)))
 	for y_offset in range(height):
 		var y := ((start_y + y_offset) % height) if height > 0 else 0
 		if y < 0 or y >= surfaces.size():
@@ -146,7 +154,7 @@ func _find_cluster(land_cells: Array[Vector2i], target_count: int) -> Array[Vect
 		return []
 	var best_cluster: Array[Vector2i] = []
 	for _attempt in range(max(1, max_attempts)):
-		var anchor: Vector2i = land_cells[randi_range(0, land_cells.size() - 1)]
+		var anchor: Vector2i = land_cells[_rng.randi_range(0, land_cells.size() - 1)]
 		var candidate_cluster := _build_cluster(anchor, land_cells, target_count)
 		if candidate_cluster.size() > best_cluster.size():
 			best_cluster = candidate_cluster.duplicate()
@@ -157,7 +165,7 @@ func _find_cluster(land_cells: Array[Vector2i], target_count: int) -> Array[Vect
 func _build_cluster(anchor: Vector2i, land_cells: Array[Vector2i], target_count: int) -> Array[Vector2i]:
 	var cluster: Array[Vector2i] = [anchor]
 	var shuffled: Array = land_cells.duplicate()
-	shuffled.shuffle()
+	_shuffle_array(shuffled)
 	for cell_variant in shuffled:
 		var cell: Vector2i = cell_variant
 		if cell == anchor:
@@ -193,4 +201,11 @@ func _random_tile() -> Vector2i:
 	var max_x: int = max(tile_min.x, tile_max.x)
 	var min_y: int = min(tile_min.y, tile_max.y)
 	var max_y: int = max(tile_min.y, tile_max.y)
-	return Vector2i(randi_range(min_x, max_x), randi_range(min_y, max_y))
+	return Vector2i(_rng.randi_range(min_x, max_x), _rng.randi_range(min_y, max_y))
+
+func _shuffle_array(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = _rng.randi_range(0, i)
+		var tmp: Variant = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp

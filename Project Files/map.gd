@@ -11,8 +11,8 @@ signal map_rebuild_started
 signal map_rebuild_finished
 
 const MapUtilsRef := preload("res://utils/map_utils.gd")
-const RedshirtSpawnerScript := preload("res://utils/redshirt_spawner.gd")
-const RedshirtAgentScript := preload("res://utils/redshirt_agent.gd")
+const RedshirtSystem := preload("res://utils/redshirt_system.gd")
+const TerrainBuilder := preload("res://utils/terrain_builder.gd")
 
 # ── Scene refs ────────────────────────────────────────────────────────────────
 @onready var cam: Camera2D = $Camera2D
@@ -24,6 +24,8 @@ const RedshirtAgentScript := preload("res://utils/redshirt_agent.gd")
 
 var draw_root: Node2D
 var layers: Array[TileMapLayer] = []
+var _redshirt_system: RedshirtSystem
+var _terrain_builder: TerrainBuilder
 
 func _suffix_int(s: String) -> int:
 	var digits := ""
@@ -154,30 +156,24 @@ const BOULDER_TILE_OFFSET_MIN := DEFAULT_BOULDER_TILE_MIN - FAMILIES[DEFAULT_FAM
 const BOULDER_TILE_OFFSET_MAX := DEFAULT_BOULDER_TILE_MAX - FAMILIES[DEFAULT_FAM_STONE]
 const REDSHIRT_SORT_BIAS: int = 64
 const REDSHIRT_WANDER_RADIUS: int = 6
+const REDSHIRT_WANDER_RADIUS_CLICK: int = 4
 const REDSHIRT_WANDER_RADIUS_JITTER: int = 3
 const REDSHIRT_MOVE_INTERVAL: Vector2 = Vector2(1.0, 3.2)
 const REDSHIRT_SECONDS_PER_TILE: float = 0.38
+const REDSHIRT_FOCUS_LERP_TIME: float = 0.65
+const FOCUS_CIRCLE_SEGMENTS: int = 48
+const FOCUS_CIRCLE_COLOR := Color(1.0, 0.95, 0.25, 0.7)
+const FOCUS_CIRCLE_WIDTH: float = 2.0
 
 # ── noise fields ──────────────────────────────────────────────────────────────
-var top_noise: FastNoiseLite     = FastNoiseLite.new()
-var carpet_noise: FastNoiseLite  = FastNoiseLite.new()
-var grad_noise: FastNoiseLite    = FastNoiseLite.new()
-var height_u1: FastNoiseLite     = FastNoiseLite.new()
-var height_u2: FastNoiseLite     = FastNoiseLite.new()
-var detail_noise: FastNoiseLite  = FastNoiseLite.new()
 var rng_seed: int = 0
-var _water_active: bool = false
-var _water_level: int = -1
-var _water_columns: Array = []
 var _stone_family_key: String = DEFAULT_FAM_STONE
 var _dirt_family_key: String = DEFAULT_FAM_DIRT
 var _grass_family_key: String = DEFAULT_FAM_GRASS
 var _trees_cache: TreeGen
 var _boulders_cache: BoulderGen
-var _redshirt_spawner = RedshirtSpawnerScript.new()
-var _camera_centered_by_spawn: bool = false
-var _camera_focus_tween: Tween
-var _active_redshirts: Array = []
+var _obstacle_sources: Dictionary = {}
+var _obstacle_lookup: Dictionary = {}
 
 # ── cached atlas source / metrics ─────────────────────────────────────────────
 var _atlas_src: TileSetAtlasSource
@@ -189,17 +185,20 @@ var _water_surface_material: ShaderMaterial
 var _water_depth_material: ShaderMaterial
 var _grass_blade_material: ShaderMaterial
 var _reed_material: ShaderMaterial
+var _slice_rng := RandomNumberGenerator.new()
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
-	randomize()
 	_collect_layers()
 	_setup_draw_root()
-	_setup_noises()
+	_ensure_redshirt_system()
+	_ensure_terrain_builder()
 	_bind_atlas_source()
+	_ensure_redshirt_system()
 	_setup_wiggle_materials()
 	_hide_tilemap_layers()
-	_rebuild()
+	_bind_dressing_signals()
+	new_slice()
 
 func _setup_draw_root() -> void:
 	var existing := get_node_or_null("DrawRoot")
@@ -210,8 +209,36 @@ func _setup_draw_root() -> void:
 	else:
 		draw_root = Node2D.new()
 		draw_root.name = "DrawRoot"
-		add_child(draw_root)
+	add_child(draw_root)
 	draw_root.y_sort_enabled = false
+	_ensure_redshirt_system()
+
+func _ensure_redshirt_system() -> void:
+	if _redshirt_system == null:
+		_redshirt_system = RedshirtSystem.new()
+		_redshirt_system.setup(self)
+	if draw_root != null:
+		_redshirt_system.set_draw_root(draw_root)
+	if _atlas_src != null and _atlas_tex != null:
+		_redshirt_system.set_atlas(_atlas_src, _atlas_tex)
+
+func _ensure_terrain_builder() -> void:
+	if _terrain_builder == null:
+		_terrain_builder = TerrainBuilder.new()
+		_terrain_builder.setup(self)
+
+func _apply_slice_seed() -> void:
+	if _terrain_builder != null:
+		_terrain_builder.apply_seed(rng_seed)
+	_slice_rng.seed = rng_seed ^ 0xDEADBEEF
+	var trees := _get_tree_gen()
+	if trees != null and trees.has_method("set_seed"):
+		trees.set_seed(rng_seed ^ 0x13572468)
+	var boulders := _get_boulder_gen()
+	if boulders != null and boulders.has_method("set_seed"):
+		boulders.set_seed(rng_seed ^ 0x2468ACE1)
+	if _redshirt_system != null:
+		_redshirt_system.set_seed(rng_seed ^ 0x77F00F77)
 
 func _bind_atlas_source() -> void:
 	_base_tm = _get_layer(0)
@@ -449,6 +476,15 @@ func _apply_palette_to_boulders() -> void:
 	var max_corner: Vector2i = base + BOULDER_TILE_OFFSET_MAX
 	b.set_tile_region(min_corner, max_corner)
 
+func _bind_dressing_signals() -> void:
+	var cb := Callable(self, "_on_dressing_highlight_clicked")
+	var trees := _get_tree_gen()
+	if trees != null and trees.has_signal("highlight_clicked") and not trees.highlight_clicked.is_connected(cb):
+		trees.highlight_clicked.connect(cb, CONNECT_REFERENCE_COUNTED)
+	var boulders := _get_boulder_gen()
+	if boulders != null and boulders.has_signal("highlight_clicked") and not boulders.highlight_clicked.is_connected(cb):
+		boulders.highlight_clicked.connect(cb, CONNECT_REFERENCE_COUNTED)
+
 func _get_tree_gen() -> TreeGen:
 	if _trees_cache != null and is_instance_valid(_trees_cache):
 		return _trees_cache
@@ -474,6 +510,31 @@ func _dirt_atlas() -> Vector2i:
 	var size: Vector2i = GROUPS["dirt"]["size"]
 	return _family_base(_dirt_family_key) + Vector2i(rel.x + size.x - 1, rel.y + 1)
 
+func register_obstacle_cells(source: StringName, cells: Array[Vector2i]) -> void:
+	var key: StringName = (source if source is StringName else StringName(str(source)))
+	var copy: Array[Vector2i] = []
+	if cells != null:
+		for cell_variant in cells:
+			if cell_variant is Vector2i:
+				copy.append(cell_variant)
+	_obstacle_sources[key] = copy
+	_rebuild_obstacle_lookup()
+
+func _rebuild_obstacle_lookup() -> void:
+	_obstacle_lookup.clear()
+	for entry in _obstacle_sources.values():
+		if entry is Array:
+			for cell_variant in entry:
+				if cell_variant is Vector2i:
+					var cell: Vector2i = cell_variant
+					_obstacle_lookup[_obstacle_key(cell)] = true
+
+func is_obstacle_cell(x: int, y: int) -> bool:
+	return _obstacle_lookup.has(_obstacle_key(Vector2i(x, y)))
+
+func _obstacle_key(cell: Vector2i) -> String:
+	return "%d,%d" % [cell.x, cell.y]
+
 func _grassy_dirt_atlas() -> Vector2i:
 	var rel: Vector2i = GROUPS["grassy_dirt"]["rel"]
 	return _family_base(_grass_family_key) + rel + Vector2i(0, 1)
@@ -494,116 +555,20 @@ func _water_surface_atlas() -> Vector2i:
 func _water_depth_atlas() -> Vector2i:
 	return Vector2i(72, 35)
 
-# ── noises setup ──────────────────────────────────────────────────────────────
-func _setup_noises() -> void:
-	top_noise.noise_type         = FastNoiseLite.TYPE_PERLIN
-	top_noise.frequency          = TOP_PERLIN_FREQ
-	top_noise.fractal_octaves    = TOP_PERLIN_OCTAVES
-	top_noise.fractal_gain       = TOP_PERLIN_GAIN
-	top_noise.fractal_lacunarity = TOP_PERLIN_LACUN
-
-	carpet_noise.noise_type         = FastNoiseLite.TYPE_PERLIN
-	carpet_noise.frequency          = CARPET_PERLIN_FREQ
-	carpet_noise.fractal_octaves    = CARPET_PERLIN_OCTAVES
-	carpet_noise.fractal_gain       = CARPET_PERLIN_GAIN
-	carpet_noise.fractal_lacunarity = CARPET_PERLIN_LACUN
-
-	grad_noise.noise_type         = FastNoiseLite.TYPE_PERLIN
-	grad_noise.frequency          = GRADIENT_NOISE_FREQ
-	grad_noise.fractal_octaves    = 2
-	grad_noise.fractal_gain       = 0.5
-	grad_noise.fractal_lacunarity = 2.0
-
-	detail_noise.noise_type         = FastNoiseLite.TYPE_PERLIN
-	detail_noise.frequency          = DETAIL_NOISE_FREQ
-	detail_noise.fractal_octaves    = 2
-	detail_noise.fractal_gain       = 0.5
-	detail_noise.fractal_lacunarity = 2.0
-
-	for n in [height_u1, height_u2]:
-		n.noise_type         = FastNoiseLite.TYPE_PERLIN
-		n.frequency          = 1.0
-		n.fractal_type       = FastNoiseLite.FRACTAL_NONE
-		n.fractal_octaves    = 1
-		n.fractal_gain       = 1.0
-		n.fractal_lacunarity = 2.0
-
-# ── height helpers ────────────────────────────────────────────────────────────
 func surface_z_at(x: int, y: int) -> int:
-	return _surface_z_at(x, y)
-
-func _fbm_height(noise: FastNoiseLite, x: float, y: float, base_freq: float) -> float:
-	var freq := base_freq
-	var amplitude := 1.0
-	var total := 0.0
-	var norm := 0.0
-	var octave_count: int = max(1, height_octaves)
-	for _i in range(octave_count):
-		total += noise.get_noise_2d(x * freq, y * freq) * amplitude
-		norm += amplitude
-		freq *= height_lacun
-		amplitude *= height_gain
-	return (total / norm) if norm > 0.0 else 0.0
-
-func _surface_z_at(x: int, y: int) -> int:
-	var xf := float(x)
-	var yf := float(y)
-	var base := _fbm_height(height_u1, xf, yf, height_freq)
-	var detail := _fbm_height(height_u2, xf, yf, height_freq * height_detail_freq_mult)
-	var combined := lerpf(base, detail, clampf(height_detail_weight, 0.0, 1.0))
-	var normalized := clampf(0.5 + 0.5 * combined, 0.0, 1.0)
-	normalized = pow(normalized, height_shape_exp)
-	var min_t := clampf(height_min_t, 0.0, HEIGHT_MAX_T_CAP)
-	var max_t := clampf(height_max_t, min_t + 1e-5, HEIGHT_MAX_T_CAP)
-	var zf: float = lerpf(min_t * float(Z_MAX), max_t * float(Z_MAX), normalized)
-	return clampi(int(round(zf)), 0, Z_MAX)
+	if _terrain_builder == null:
+		return 0
+	return _terrain_builder.surface_z_at(x, y)
 
 func is_water_column(x: int, y: int) -> bool:
-	if not _water_active:
+	if _terrain_builder == null:
 		return false
-	if y < 0 or y >= _water_columns.size():
-		return false
-	var row: Array = _water_columns[y]
-	if x < 0 or x >= row.size():
-		return false
-	return bool(row[x])
+	return _terrain_builder.is_water_column(x, y)
 
 func is_grass_topped(x: int, y: int, z: int) -> bool:
-	if z != _surface_z_at(x, y):
+	if _terrain_builder == null:
 		return false
-	if is_water_column(x, y):
-		return false
-	var n_grass: float = 0.5 + 0.5 * top_noise.get_noise_2d(float(x), float(y))
-	return n_grass > TOP_PERLIN_THRESH
-
-func _detail_offset(x: int, y: int, weight: float) -> Vector2:
-	var jitter_u := detail_noise.get_noise_3d(float(x), float(y), 17.0)
-	var jitter_v := detail_noise.get_noise_3d(float(x), float(y), -41.0)
-	var scale_factor: float = DETAIL_JITTER_PX * clampf(0.25 + weight * 0.75, 0.0, 1.0)
-	return Vector2(jitter_u, jitter_v) * scale_factor
-
-func _spawn_surface_detail(x: int, y: int, z_surf: int) -> void:
-	if is_water_column(x, y) or z_surf < SEA_Z:
-		return
-	var n := 0.5 + 0.5 * detail_noise.get_noise_2d(float(x), float(y))
-	if n > DETAIL_GRASS_THRESH and z_surf + 1 <= Z_MAX:
-		var weight := clampf((n - DETAIL_GRASS_THRESH) / max(0.001, 1.0 - DETAIL_GRASS_THRESH), 0.0, 1.0)
-		var offset := _detail_offset(x, y, weight)
-		var scale_f := lerpf(0.85, 1.2, weight)
-		var tint := Color(1.0, lerpf(0.9, 1.0, weight), 1.0, 0.9 + 0.1 * weight)
-		var z_top: int = min(z_surf + 1, Z_MAX)
-		_place_detail_sprite(_grass_blade_atlas(), x, y, z_top, offset, Vector2(scale_f, scale_f), 0.05 * (weight - 0.5), tint)
-		if n > DETAIL_DENSE_THRESH:
-			var weight2 := clampf((n - DETAIL_DENSE_THRESH) / max(0.001, 1.0 - DETAIL_DENSE_THRESH), 0.0, 1.0)
-			var offset2 := _detail_offset(x + 37, y + 19, weight2) * 0.5
-			var scale_f2 := lerpf(0.7, 1.0, weight2)
-			_place_detail_sprite(_grass_blade_atlas(), x, y, z_top, offset2, Vector2(scale_f2, scale_f2), -0.05 * (weight2 - 0.5), tint)
-	elif n < DETAIL_STONE_THRESH:
-		var weight_stone := clampf((DETAIL_STONE_THRESH - n) / max(0.001, DETAIL_STONE_THRESH), 0.0, 1.0)
-		var offset_stone := _detail_offset(x + 11, y + 53, weight_stone) * 0.6
-		var scale_s := lerpf(0.6, 0.95, weight_stone)
-		var tint_s := Color(lerpf(0.8, 1.0, weight_stone), lerpf(0.8, 0.95, weight_stone), lerpf(0.8, 0.9, weight_stone), 0.85 + 0.15 * weight_stone)
-		_place_detail_sprite(_stone_pebble_atlas(), x, y, z_surf, offset_stone, Vector2(scale_s, scale_s), 0.0, tint_s)
+	return _terrain_builder.is_grass_topped(x, y, z)
 
 func get_height_settings() -> Dictionary:
 	return {
@@ -658,7 +623,8 @@ func get_max_elevation() -> int:
 func _clear_drawables() -> void:
 	if not draw_root:
 		return
-	_despawn_redshirts()
+	if _redshirt_system != null:
+		_redshirt_system.clear_for_rebuild()
 	for c in draw_root.get_children():
 		c.queue_free()
 
@@ -672,117 +638,27 @@ func _center_camera_on_middle() -> void:
 func _rebuild(new_seed: int = -1) -> void:
 	map_rebuild_started.emit()
 	_clear_drawables()
-	_camera_centered_by_spawn = false
 	rng_seed = (new_seed if new_seed != -1 else randi())
-	top_noise.seed     = rng_seed ^ 0xABCDEF01
-	carpet_noise.seed  = rng_seed ^ 0xBADC0DED
-	grad_noise.seed    = rng_seed ^ 0x13579BDF
-	height_u1.seed     = rng_seed ^ 0x0F0F0F0F
-	height_u2.seed     = rng_seed ^ 0xF00DFACE
-	detail_noise.seed  = rng_seed ^ 0x2468ACE1
-	_spawn_cube_terrain()
-	if not _camera_centered_by_spawn:
+	_apply_slice_seed()
+	var surfaces: Array = []
+	if _terrain_builder != null:
+		surfaces = _terrain_builder.build_terrain()
+	_spawn_shore_reeds(surfaces)
+	if _redshirt_system != null:
+		_redshirt_system.spawn_redshirts(surfaces)
+	var camera_centered := (_redshirt_system != null and _redshirt_system.camera_centered_by_spawn())
+	if not camera_centered:
 		_center_camera_on_middle()
+	if _redshirt_system != null:
+		_redshirt_system.refresh_focus_indicator()
+	_bind_dressing_signals()
 	map_rebuild_finished.emit()
 
 # ── main build (per-column surface, fill below, water where air≤sea) ──────────
 const SEA_Z := 0
 
-func _spawn_cube_terrain() -> void:
-	var atlas_stone := _stone_atlas()
-	var atlas_dirt  := _dirt_atlas()
-	var atlas_grass := _grassy_dirt_atlas()
-	var atlas_water_surface := _water_surface_atlas()
-	var atlas_water_depth := _water_depth_atlas()
-	var water_tint := Color(1.0, 1.0, 1.0, WATER_ALPHA)
-
-	_water_columns.clear()
-	for _y in range(H):
-		var row: Array = []
-		row.resize(W)
-		for i in range(W):
-			row[i] = false
-		_water_columns.append(row)
-
-	var surfaces: Array = []
-	var grass_mask: Array = []
-	var min_grass: int = Z_MAX
-	var max_grass: int = 0
-	var grass_found := false
-	for y in range(H):
-		var row_surf: Array = []
-		var row_grass: Array = []
-		for x in range(W):
-			var z_surf: int = _surface_z_at(x, y)
-			row_surf.append(z_surf)
-			var n_grass: float = 0.5 + 0.5 * top_noise.get_noise_2d(float(x), float(y))
-			var is_grass := n_grass > TOP_PERLIN_THRESH
-			row_grass.append(is_grass)
-			if is_grass:
-				grass_found = true
-				min_grass = min(min_grass, z_surf)
-				max_grass = max(max_grass, z_surf)
-		surfaces.append(row_surf)
-		grass_mask.append(row_grass)
-
-	var min_percent: float = min(water_percent_min, water_percent_max)
-	var max_percent: float = max(water_percent_min, water_percent_max)
-	min_percent = clampf(min_percent, 0.0, 1.0)
-	max_percent = clampf(max_percent, 0.0, 1.0)
-
-	_water_active = false
-	_water_level = -1
-	if grass_found and max_percent > 0.0 and randf() < clampf(water_spawn_chance, 0.0, 1.0):
-		var span: int = max_grass - min_grass
-		var percent: float = (max_percent if is_equal_approx(min_percent, max_percent) else randf_range(min_percent, max_percent))
-		var level_f := float(min_grass) + float(span) * percent
-		_water_level = clampi(int(round(level_f)), 0, Z_MAX)
-		_water_active = _water_level >= 0
-
-	for y in range(H):
-		var row_surf: Array = surfaces[y]
-		var row_grass: Array = grass_mask[y]
-		var water_row: Array = _water_columns[y]
-		for x in range(W):
-			var z_surf: int = row_surf[x]
-			var column_has_water := false
-			if _water_active:
-				var water_cap: int = min(_water_level, Z_MAX)
-				for z in range(0, water_cap + 1):
-					if z > z_surf:
-						var atlas_xy := (atlas_water_surface if z == water_cap else atlas_water_depth)
-						var mat := (_water_surface_material if z == water_cap else _water_depth_material)
-						_place_sprite(atlas_xy, x, y, z, water_tint, mat)
-						column_has_water = true
-			water_row[x] = column_has_water
-			var has_grass_top := bool(row_grass[x]) and not column_has_water
-			if has_grass_top:
-				_place_sprite(atlas_grass, x, y, z_surf)
-				var n_carpet: float = 0.5 + 0.5 * carpet_noise.get_noise_2d(float(x), float(y))
-				if n_carpet > CARPET_PERLIN_THRESH and z_surf + 1 <= Z_MAX:
-					_place_sprite(_grass_blade_atlas(), x, y, z_surf + 1, Color(1, 1, 1, 1), _grass_blade_material)
-			else:
-				_place_sprite(atlas_dirt, x, y, z_surf)
-
-			for z in range(max(0, z_surf - DIRT_CAP_LAYERS), z_surf):
-				_place_sprite(atlas_dirt, x, y, z)
-
-			var grad_top: int = max(0, z_surf - DIRT_CAP_LAYERS - 1)
-			for z in range(0, grad_top + 1):
-				var base_p: float = float(z) / float(max(1, grad_top)) + GRADIENT_BIAS
-				var jitter: float = GRADIENT_NOISE_AMPL * (0.5 + 0.5 * grad_noise.get_noise_2d(float(x), float(y)))
-				var p_dirt: float = clampf(base_p + (jitter - GRADIENT_NOISE_AMPL * 0.5), 0.0, 1.0)
-				var atlas := (atlas_dirt if randf() < p_dirt else atlas_stone)
-				_place_sprite(atlas, x, y, z)
-
-			_spawn_surface_detail(x, y, z_surf)
-		_water_columns[y] = water_row
-
-	_spawn_shore_reeds(surfaces)
-	_spawn_redshirts(surfaces)
-
 func _spawn_shore_reeds(surfaces: Array) -> void:
-	if not _water_active:
+	if _terrain_builder == null or not _terrain_builder.has_active_water():
 		return
 	var atlas_reed := REED_TILE
 	for y in range(H):
@@ -791,7 +667,7 @@ func _spawn_shore_reeds(surfaces: Array) -> void:
 				continue
 			if not _adjacent_to_water(x, y):
 				continue
-			if randf() > REED_SPAWN_CHANCE:
+			if _slice_rng.randf() > REED_SPAWN_CHANCE:
 				continue
 			var z_surf: int = (surfaces[y][x] as int)
 			if z_surf + 1 <= Z_MAX:
@@ -808,245 +684,10 @@ func _adjacent_to_water(x: int, y: int) -> bool:
 			return true
 	return false
 
-func _spawn_redshirts(surfaces: Array) -> void:
-	if _redshirt_spawner == null or _atlas_src == null or _atlas_tex == null:
-		return
-	var placements = _redshirt_spawner.spawn_redshirts(
-		Callable(),
-		Callable(self, "is_water_column"),
-		surfaces,
-		W,
-		H,
-		Z_MAX
-	)
-	if placements.is_empty():
-		return
-	var pending: Array[Dictionary] = []
-	var positions: Array[Vector2i] = []
-	for placement_variant in placements:
-		if typeof(placement_variant) != TYPE_DICTIONARY:
-			continue
-		var placement: Dictionary = placement_variant
-		var atlas_xy: Vector2i = placement.get("atlas", Vector2i.ZERO)
-		var pos: Vector2i = placement.get("pos", Vector2i.ZERO)
-		var flip_h: bool = bool(placement.get("flip_h", false))
-		pending.append({
-			"atlas": atlas_xy,
-			"pos": pos,
-			"flip_h": flip_h
-		})
-		positions.append(pos)
-	if pending.is_empty():
-		return
-	var center_cell := _cluster_center_cell(positions)
-	_schedule_redshirt_beam(center_cell, pending, positions, surfaces)
+func _on_dressing_highlight_clicked(cell: Vector2i, _world_position: Vector2, _source: StringName) -> void:
+	if _redshirt_system != null:
+		_redshirt_system.handle_dressing_highlight(cell)
 
-func _schedule_redshirt_beam(center_cell: Vector2i, pending: Array, positions: Array[Vector2i], surfaces: Array) -> void:
-	var pending_copy: Array = []
-	for entry_variant in pending:
-		if entry_variant is Dictionary:
-			pending_copy.append((entry_variant as Dictionary).duplicate(true))
-	var positions_copy: Array[Vector2i] = []
-	for cell_variant in positions:
-		positions_copy.append(cell_variant)
-	_focus_camera_on_cell(center_cell, BEAM_CAMERA_FOCUS_TIME)
-	if BEAM_SPAWN_DELAY <= 0.0:
-		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
-		return
-	var tree := get_tree()
-	if tree == null:
-		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
-		return
-	var timer := tree.create_timer(BEAM_SPAWN_DELAY)
-	timer.timeout.connect(func ():
-		_finalize_redshirt_beam(center_cell, pending_copy, positions_copy, surfaces)
-	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
-
-func _finalize_redshirt_beam(center_cell: Vector2i, pending: Array, positions: Array[Vector2i], surfaces: Array) -> void:
-	_play_beam_down_effect(center_cell, positions.size())
-	var delay: float = max(0.0, BEAM_REDSHIRT_DELAY)
-	if delay <= 0.0:
-		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
-		return
-	var tree := get_tree()
-	if tree == null:
-		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
-		return
-	var timer := tree.create_timer(delay)
-	timer.timeout.connect(func ():
-		_spawn_redshirt_batch(pending, center_cell, positions, surfaces)
-	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
-
-func _spawn_redshirt_batch(pending: Array, center_cell: Vector2i, positions: Array[Vector2i], surfaces: Array) -> void:
-	for entry_variant in pending:
-		var entry: Dictionary = entry_variant
-		var atlas_xy: Vector2i = entry.get("atlas", Vector2i.ZERO)
-		var pos: Vector2i = entry.get("pos", Vector2i.ZERO)
-		var flip_h: bool = bool(entry.get("flip_h", false))
-		_place_redshirt_sprite(atlas_xy, pos.x, pos.y, flip_h, center_cell, _random_redshirt_radius())
-	_camera_centered_by_spawn = true
-
-func _place_redshirt_sprite(
-	atlas_xy: Vector2i,
-	x: int,
-	y: int,
-	flip_h: bool,
-	wander_center: Vector2i,
-	wander_radius: int
-) -> void:
-	if _atlas_src == null or _atlas_tex == null or draw_root == null:
-		return
-	var region: Rect2i = _atlas_src.get_tile_texture_region(atlas_xy)
-	if region.size == Vector2i.ZERO:
-		return
-	var agent := RedshirtAgentScript.new()
-	var anchor := Vector2(_tile_w * 0.5, _tile_h)
-	draw_root.add_child(agent)
-	agent.configure(
-		self,
-		_atlas_tex,
-		region,
-		Vector2i(x, y),
-		anchor,
-		REDSHIRT_SORT_BIAS,
-		wander_center,
-		wander_radius,
-		REDSHIRT_MOVE_INTERVAL,
-		REDSHIRT_SECONDS_PER_TILE,
-		flip_h
-	)
-	_register_redshirt(agent)
-	var tint := agent.modulate
-	agent.modulate = Color(tint.r, tint.g, tint.b, 0.0)
-	var fade := agent.create_tween()
-	fade.tween_property(agent, "modulate:a", 1.0, REDSHIRT_SPAWN_FADE).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)
-
-func _focus_camera_on_cell(center_cell: Vector2i, duration: float) -> void:
-	if cam == null:
-		return
-	var z_top := surface_z_at(center_cell.x, center_cell.y)
-	var target := project_iso3d(float(center_cell.x), float(center_cell.y), float(z_top + 1))
-	if duration <= 0.0:
-		if _camera_focus_tween != null:
-			_camera_focus_tween.kill()
-			_camera_focus_tween = null
-		cam.global_position = target
-		_camera_centered_by_spawn = true
-		return
-	_camera_centered_by_spawn = false
-	if _camera_focus_tween != null:
-		_camera_focus_tween.kill()
-	_camera_focus_tween = cam.create_tween()
-	_camera_focus_tween.tween_property(cam, "global_position", target, duration).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)
-	_camera_focus_tween.finished.connect(func ():
-		_camera_centered_by_spawn = true
-		_camera_focus_tween = null
-	, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
-
-func _cluster_center_cell(cells: Array[Vector2i]) -> Vector2i:
-	if cells.is_empty():
-		return Vector2i(W >> 1, H >> 1)
-	var accum_x := 0.0
-	var accum_y := 0.0
-	for cell_variant in cells:
-		var cell: Vector2i = cell_variant
-		accum_x += float(cell.x)
-		accum_y += float(cell.y)
-	var inv := 1.0 / float(max(1, cells.size()))
-	var dims := get_dimensions()
-	var cx := clampi(int(round(accum_x * inv)), 0, max(0, dims.x - 1))
-	var cy := clampi(int(round(accum_y * inv)), 0, max(0, dims.y - 1))
-	return Vector2i(cx, cy)
-
-func _register_redshirt(agent: Node) -> void:
-	if agent == null:
-		return
-	_active_redshirts.append(agent)
-	var cleanup := Callable(self, "_on_redshirt_tree_exit").bind(agent)
-	if agent.tree_exited.is_connected(cleanup):
-		return
-	agent.tree_exited.connect(cleanup, CONNECT_ONE_SHOT | CONNECT_REFERENCE_COUNTED)
-
-func _on_redshirt_tree_exit(agent: Node) -> void:
-	if _active_redshirts.has(agent):
-		_active_redshirts.erase(agent)
-
-func _despawn_redshirts() -> void:
-	for agent in _active_redshirts:
-		if is_instance_valid(agent):
-			agent.queue_free()
-	_active_redshirts.clear()
-
-func _play_beam_down_effect(center_cell: Vector2i, count: int) -> void:
-	if draw_root == null:
-		return
-	var z_top := surface_z_at(center_cell.x, center_cell.y)
-	var beam_base_pos := project_iso3d(float(center_cell.x), float(center_cell.y), float(z_top + 1))
-	var beam := Node2D.new()
-	beam.position = beam_base_pos - Vector2(0.0, BEAM_HEIGHT_PX) # anchor so the bottom sits on the ground plane
-	beam.z_index = MapUtilsRef.sort_key(center_cell.x, center_cell.y, z_top + 2) + 128
-	var poly := Polygon2D.new()
-	var width := BEAM_WIDTH_BASE_PX + float(max(0, count - 1)) * BEAM_WIDTH_PER_AGENT_PX
-	var half_w := width * 0.5
-	poly.polygon = PackedVector2Array([
-		Vector2(-half_w, 0.0),
-		Vector2(half_w, 0.0),
-		Vector2(half_w * 0.5, BEAM_HEIGHT_PX),
-		Vector2(-half_w * 0.5, BEAM_HEIGHT_PX),
-	])
-	poly.modulate = BEAM_COLOR
-	poly.antialiased = true
-	beam.add_child(poly)
-	draw_root.add_child(beam)
-	poly.scale = Vector2(0.3, 0.1)
-	var shimmer := CPUParticles2D.new()
-	shimmer.position = Vector2(0.0, BEAM_HEIGHT_PX * 0.5)
-	shimmer.amount = BEAM_COLUMN_PARTICLE_AMOUNT
-	shimmer.lifetime = BEAM_DURATION
-	shimmer.one_shot = true
-	shimmer.preprocess = BEAM_DURATION
-	shimmer.direction = Vector2(0.0, -1.0)
-	shimmer.spread = 30.0
-	shimmer.initial_velocity_min = BEAM_COLUMN_PARTICLE_SPEED * 0.35
-	shimmer.initial_velocity_max = BEAM_COLUMN_PARTICLE_SPEED
-	shimmer.gravity = Vector2.ZERO
-	shimmer.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINTS
-	var shimmer_points := PackedVector2Array()
-	var segments: int = max(1, BEAM_COLUMN_SEGMENTS)
-	for i in range(segments + 1):
-		var t := float(i) / float(segments)
-		var y := t * BEAM_HEIGHT_PX
-		shimmer_points.append(Vector2(-half_w, y))
-		shimmer_points.append(Vector2(half_w, y))
-	shimmer.emission_points = shimmer_points
-	shimmer.modulate = Color(BEAM_COLOR.r, BEAM_COLOR.g, BEAM_COLOR.b, 0.8)
-	shimmer.emitting = true
-	beam.add_child(shimmer)
-	var sparks := CPUParticles2D.new()
-	sparks.position = Vector2(0.0, BEAM_HEIGHT_PX)
-	sparks.amount = BEAM_LANDING_PARTICLE_AMOUNT
-	sparks.lifetime = BEAM_LANDING_PARTICLE_LIFETIME
-	sparks.one_shot = true
-	sparks.preprocess = BEAM_LANDING_PARTICLE_LIFETIME
-	sparks.spread = 240.0
-	sparks.initial_velocity_min = BEAM_LANDING_PARTICLE_SPEED * 0.5
-	sparks.initial_velocity_max = BEAM_LANDING_PARTICLE_SPEED
-	sparks.gravity = Vector2(0.0, 420.0)
-	sparks.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	sparks.emission_sphere_radius = BEAM_LANDING_PARTICLE_RADIUS
-	sparks.modulate = BEAM_COLOR
-	sparks.emitting = true
-	beam.add_child(sparks)
-	var tween := beam.create_tween()
-	tween.tween_property(poly, "scale", Vector2(1.0, 1.0), BEAM_DURATION * 0.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tween.tween_property(poly, "modulate:a", 0.0, BEAM_DURATION * 0.4).set_delay(BEAM_DURATION * 0.3).set_ease(Tween.EASE_IN)
-	tween.finished.connect(func ():
-		beam.queue_free()
-	)
-
-func _random_redshirt_radius() -> int:
-	var jitter := (randi_range(-REDSHIRT_WANDER_RADIUS_JITTER, REDSHIRT_WANDER_RADIUS_JITTER) if REDSHIRT_WANDER_RADIUS_JITTER > 0 else 0)
-	return max(1, REDSHIRT_WANDER_RADIUS + jitter)
 
 func _regenerate_object_layers(reseed_boulders: bool) -> void:
 	var trees: TreeGen = _get_tree_gen()
@@ -1061,7 +702,7 @@ func new_slice() -> void:
 	_randomize_palette(true)
 	_apply_palette_to_boulders()
 	_rebuild(randi())
-	_regenerate_object_layers(true)
+	_regenerate_object_layers(false)
 
 # ── Input (R = rebuild) ───────────────────────────────────────────────────────
 func _unhandled_input(e: InputEvent) -> void:
