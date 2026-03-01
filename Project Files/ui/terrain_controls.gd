@@ -24,6 +24,7 @@ class_name TerrainControls
 @onready var height_max_value: Label = %HeightMaxValue
 @onready var height_shape_slider: HSlider = %HeightShapeSlider
 @onready var height_shape_value: Label = %HeightShapeValue
+@onready var stone_pebbles_toggle: CheckBox = %StonePebblesToggle
 
 var _map: Node
 var _trees: Node
@@ -38,6 +39,7 @@ func _ready() -> void:
 	_boulders = (get_node_or_null(boulders_path) if not boulders_path.is_empty() else null)
 	for slider in _all_sliders():
 		slider.value_changed.connect(_on_slider_value_changed.bind(slider))
+	stone_pebbles_toggle.toggled.connect(_on_stone_pebbles_toggled)
 	_sync_from_map()
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -89,8 +91,18 @@ func _sync_from_map() -> void:
 	height_min_slider.value = settings.get("height_min_t", height_min_slider.value)
 	height_max_slider.value = settings.get("height_max_t", height_max_slider.value)
 	height_shape_slider.value = settings.get("height_shape_exp", height_shape_slider.value)
+	var pebble_variant: Variant = _map.get("enable_stone_detail_pebbles")
+	stone_pebbles_toggle.button_pressed = (pebble_variant if pebble_variant is bool else true)
 	_updating = false
 	_update_value_labels()
+
+func _on_stone_pebbles_toggled(pressed: bool) -> void:
+	if _updating or _map == null:
+		return
+	_map.set("enable_stone_detail_pebbles", pressed)
+	if _map.has_method("rebuild_world"):
+		_map.call("rebuild_world", reseed_world_on_change)
+	_refresh_world()
 
 func _enforce_min_max_gap() -> void:
 	var min_val := height_min_slider.value

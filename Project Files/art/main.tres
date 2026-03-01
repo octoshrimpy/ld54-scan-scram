@@ -1,4 +1,4 @@
-[gd_resource type="TileSet" load_steps=50 format=3 uid="uid://b5h3lf2rqpg5u"]
+[gd_resource type="TileSet" format=3 uid="uid://b5h3lf2rqpg5u"]
 
 [ext_resource type="Texture2D" uid="uid://4if7jkvmfet3" path="res://art/tileset.png" id="1_ps7ec"]
 
@@ -3230,6 +3230,30 @@ texture = ExtResource("1_ps7ec")
 68:36/0 = 0
 23:17/0 = 0
 23:17/0/texture_origin = Vector2i(0, 4)
+61:65/0 = 0
+61:66/0 = 0
+62:67/0 = 0
+63:68/0 = 0
+63:67/0 = 0
+63:66/0 = 0
+63:65/0 = 0
+62:66/0 = 0
+61:68/0 = 0
+62:68/0 = 0
+61:67/0 = 0
+62:65/0 = 0
+67:65/0 = 0
+67:66/0 = 0
+67:67/0 = 0
+68:68/0 = 0
+69:68/0 = 0
+68:67/0 = 0
+68:66/0 = 0
+69:66/0 = 0
+68:65/0 = 0
+69:67/0 = 0
+67:68/0 = 0
+69:65/0 = 0
 
 [resource]
 tile_shape = 1

@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://c4lgh5eb3j056"]
+[gd_scene format=3 uid="uid://c4lgh5eb3j056"]
 
 [ext_resource type="Script" uid="uid://426rlweresxv" path="res://map.gd" id="1_0xm2m"]
 [ext_resource type="TileSet" uid="uid://b5h3lf2rqpg5u" path="res://art/main.tres" id="1_rbax2"]
@@ -6,32 +6,32 @@
 [ext_resource type="Script" uid="uid://5usge0s66yho" path="res://trees.gd" id="4_1bvp3"]
 [ext_resource type="Script" uid="uid://ccqxg0ce61a0d" path="res://boulders.gd" id="5_lquwl"]
 [ext_resource type="Script" uid="uid://d14uvo24yvjh6" path="res://ui/terrain_controls.gd" id="6_m2ao5"]
-[ext_resource type="Script" path="res://ui/hotkey_hint.gd" id="7_4nq4a"]
+[ext_resource type="Script" uid="uid://dm0f4yuwgx3o8" path="res://ui/hotkey_hint.gd" id="7_4nq4a"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_v8fap"]
 
-[node name="Node3D" type="Node3D"]
+[node name="Node3D" type="Node3D" unique_id=1321162086]
 
-[node name="Map" type="Node2D" parent="."]
+[node name="Map" type="Node2D" parent="." unique_id=589611073]
 script = ExtResource("1_0xm2m")
 trees_path = NodePath("objects/Trees")
 boulders_path = NodePath("objects/Boulders")
 
-[node name="NavigationAgent2D" type="NavigationAgent2D" parent="Map"]
+[node name="NavigationAgent2D" type="NavigationAgent2D" parent="Map" unique_id=2053832266]
 
-[node name="Camera2D" type="Camera2D" parent="Map"]
+[node name="Camera2D" type="Camera2D" parent="Map" unique_id=340403610]
 script = ExtResource("3_h2yge")
 
-[node name="terrain" type="Node2D" parent="Map"]
+[node name="terrain" type="Node2D" parent="Map" unique_id=1986021787]
 
-[node name="Terrain0" type="TileMapLayer" parent="Map/terrain"]
+[node name="Terrain0" type="TileMapLayer" parent="Map/terrain" unique_id=344771072]
 y_sort_enabled = true
 use_parent_material = true
 tile_set = ExtResource("1_rbax2")
 
-[node name="objects" type="Node2D" parent="Map"]
+[node name="objects" type="Node2D" parent="Map" unique_id=1099632836]
 
-[node name="Trees" type="TileMapLayer" parent="Map/objects" node_paths=PackedStringArray("atlas_layer")]
+[node name="Trees" type="TileMapLayer" parent="Map/objects" unique_id=1818438936 node_paths=PackedStringArray("atlas_layer")]
 y_sort_enabled = true
 use_parent_material = true
 tile_set = ExtResource("1_rbax2")
@@ -42,7 +42,6 @@ W = 56
 H = 56
 SOURCE_ID = null
 grove_count_min = null
-grove_count_max = 6
 grove_spacing_cells = null
 grove_radius_cells_min = null
 grove_radius_cells_max = null
@@ -104,7 +103,7 @@ leaf_connect_attempts = null
 leaf_min_overlap_px = null
 leaf_snap_extra_px = null
 
-[node name="Boulders" type="TileMapLayer" parent="Map/objects" node_paths=PackedStringArray("boulders_root")]
+[node name="Boulders" type="TileMapLayer" parent="Map/objects" unique_id=1342452613 node_paths=PackedStringArray("boulders_root")]
 y_sort_enabled = true
 use_parent_material = true
 tile_set = ExtResource("1_rbax2")
@@ -117,53 +116,50 @@ rock_count_min = 6
 rock_count_max = 9
 pixel_snap = false
 
-[node name="TerrainControls" type="CanvasLayer" parent="."]
+[node name="TerrainControls" type="CanvasLayer" parent="." unique_id=957838065]
 script = ExtResource("6_m2ao5")
 map_path = NodePath("../Map")
 trees_path = NodePath("../Map/objects/Trees")
 boulders_path = NodePath("../Map/objects/Boulders")
 
-[node name="HotkeyHint" type="CanvasLayer" parent="."]
-script = ExtResource("7_4nq4a")
-
-[node name="Panel" type="PanelContainer" parent="TerrainControls"]
+[node name="Panel" type="PanelContainer" parent="TerrainControls" unique_id=2049446484]
 offset_left = 16.0
 offset_top = 16.0
 offset_right = 296.0
 offset_bottom = 400.0
 
-[node name="Margin" type="MarginContainer" parent="TerrainControls/Panel"]
+[node name="Margin" type="MarginContainer" parent="TerrainControls/Panel" unique_id=1892910261]
 layout_mode = 2
 
-[node name="VBox" type="VBoxContainer" parent="TerrainControls/Panel/Margin"]
+[node name="VBox" type="VBoxContainer" parent="TerrainControls/Panel/Margin" unique_id=2117954995]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="Title" type="Label" parent="TerrainControls/Panel/Margin/VBox" unique_id=1482276082]
 layout_mode = 2
 text = "Terrain Controls"
 horizontal_alignment = 1
 
-[node name="HeightFreqGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightFreqGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=1013100012]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup" unique_id=1578449701]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup/Header" unique_id=1767663981]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Base Frequency"
 
-[node name="HeightFreqValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup/Header"]
+[node name="HeightFreqValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup/Header" unique_id=795632281]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "0.034"
 horizontal_alignment = 2
 
-[node name="HeightFreqSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup"]
+[node name="HeightFreqSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightFreqGroup" unique_id=1199895126]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -172,26 +168,26 @@ max_value = 0.1
 step = 0.001
 value = 0.034
 
-[node name="HeightOctavesGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightOctavesGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=104729536]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup" unique_id=1309816040]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup/Header" unique_id=1158756361]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Octaves"
 
-[node name="HeightOctavesValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup/Header"]
+[node name="HeightOctavesValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup/Header" unique_id=433429747]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "2"
 horizontal_alignment = 2
 
-[node name="HeightOctavesSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup"]
+[node name="HeightOctavesSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightOctavesGroup" unique_id=1859222477]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -199,26 +195,26 @@ min_value = 1.0
 max_value = 12.0
 value = 2.0
 
-[node name="HeightGainGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightGainGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=1076250849]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup" unique_id=310755131]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup/Header" unique_id=2121671]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Gain"
 
-[node name="HeightGainValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup/Header"]
+[node name="HeightGainValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup/Header" unique_id=1794368808]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "0.27"
 horizontal_alignment = 2
 
-[node name="HeightGainSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup"]
+[node name="HeightGainSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightGainGroup" unique_id=93809468]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -227,26 +223,26 @@ max_value = 1.0
 step = 0.01
 value = 0.27
 
-[node name="HeightLacunGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightLacunGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=1199609129]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup" unique_id=1231518322]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup/Header" unique_id=1491441107]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Lacunarity"
 
-[node name="HeightLacunValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup/Header"]
+[node name="HeightLacunValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup/Header" unique_id=1849063801]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "2.90"
 horizontal_alignment = 2
 
-[node name="HeightLacunSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup"]
+[node name="HeightLacunSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightLacunGroup" unique_id=864392319]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -255,26 +251,26 @@ max_value = 5.0
 step = 0.05
 value = 2.9
 
-[node name="DetailFreqGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="DetailFreqGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=112471541]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup" unique_id=1200826055]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup/Header" unique_id=2056427117]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Detail Frequency"
 
-[node name="DetailFreqValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup/Header"]
+[node name="DetailFreqValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup/Header" unique_id=1153308332]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "1.85"
 horizontal_alignment = 2
 
-[node name="DetailFreqSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup"]
+[node name="DetailFreqSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/DetailFreqGroup" unique_id=430244085]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -283,26 +279,26 @@ max_value = 8.0
 step = 0.05
 value = 1.85
 
-[node name="DetailWeightGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="DetailWeightGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=2032550534]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup" unique_id=829663435]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup/Header" unique_id=320327798]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Detail Weight"
 
-[node name="DetailWeightValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup/Header"]
+[node name="DetailWeightValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup/Header" unique_id=939361963]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "0.71"
 horizontal_alignment = 2
 
-[node name="DetailWeightSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup"]
+[node name="DetailWeightSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/DetailWeightGroup" unique_id=27622306]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -310,52 +306,52 @@ max_value = 1.0
 step = 0.01
 value = 0.71
 
-[node name="HeightMinGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightMinGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=565243733]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup" unique_id=1560593364]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup/Header" unique_id=124229095]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Min Elevation"
 
-[node name="HeightMinValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup/Header"]
+[node name="HeightMinValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup/Header" unique_id=997127767]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "0.00"
 horizontal_alignment = 2
 
-[node name="HeightMinSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup"]
+[node name="HeightMinSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightMinGroup" unique_id=149615748]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 max_value = 1.49
 step = 0.01
 
-[node name="HeightMaxGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightMaxGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=1480940887]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup" unique_id=2038370341]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup/Header" unique_id=1021826677]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Max Elevation"
 
-[node name="HeightMaxValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup/Header"]
+[node name="HeightMaxValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup/Header" unique_id=940966784]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "0.99"
 horizontal_alignment = 2
 
-[node name="HeightMaxSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup"]
+[node name="HeightMaxSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightMaxGroup" unique_id=1594700671]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -363,26 +359,26 @@ max_value = 1.5
 step = 0.01
 value = 0.99
 
-[node name="HeightShapeGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox"]
+[node name="HeightShapeGroup" type="VBoxContainer" parent="TerrainControls/Panel/Margin/VBox" unique_id=556870883]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup"]
+[node name="Header" type="HBoxContainer" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup" unique_id=165554586]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup/Header"]
+[node name="Label" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup/Header" unique_id=708567744]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Shape Exponent"
 
-[node name="HeightShapeValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup/Header"]
+[node name="HeightShapeValue" type="Label" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup/Header" unique_id=1264335838]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "1.75"
 horizontal_alignment = 2
 
-[node name="HeightShapeSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup"]
+[node name="HeightShapeSlider" type="HSlider" parent="TerrainControls/Panel/Margin/VBox/HeightShapeGroup" unique_id=1903780024]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -391,11 +387,20 @@ max_value = 4.0
 step = 0.05
 value = 1.75
 
-[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+[node name="StonePebblesToggle" type="CheckBox" parent="TerrainControls/Panel/Margin/VBox" unique_id=1622004582]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Debug: Stone detail pebbles"
+button_pressed = false
 
-[node name="Sprite2D" type="Sprite2D" parent="CharacterBody3D"]
+[node name="HotkeyHint" type="CanvasLayer" parent="." unique_id=1435539069]
+script = ExtResource("7_4nq4a")
 
-[node name="NavigationAgent3D" type="NavigationAgent3D" parent="CharacterBody3D"]
+[node name="CharacterBody3D" type="CharacterBody3D" parent="." unique_id=1939008537]
 
-[node name="CollisionShape2D" type="CollisionShape3D" parent="CharacterBody3D"]
+[node name="Sprite2D" type="Sprite2D" parent="CharacterBody3D" unique_id=357621755]
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="CharacterBody3D" unique_id=2023866509]
+
+[node name="CollisionShape2D" type="CollisionShape3D" parent="CharacterBody3D" unique_id=45940694]
 shape = SubResource("CapsuleShape3D_v8fap")

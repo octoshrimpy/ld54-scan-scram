@@ -215,7 +215,7 @@ func _spawn_surface_detail(x: int, y: int, z_surf: int) -> void:
 			var offset2 := _detail_offset(x + 37, y + 19, weight2) * 0.5
 			var scale_f2 := lerpf(0.7, 1.0, weight2)
 			map._place_detail_sprite(map._grass_blade_atlas(), x, y, z_top, offset2, Vector2(scale_f2, scale_f2), -0.05 * (weight2 - 0.5), tint)
-	elif n < map.DETAIL_STONE_THRESH:
+	elif map.enable_stone_detail_pebbles and n < map.DETAIL_STONE_THRESH:
 		var weight_stone := clampf((map.DETAIL_STONE_THRESH - n) / max(0.001, map.DETAIL_STONE_THRESH), 0.0, 1.0)
 		var offset_stone := _detail_offset(x + 11, y + 53, weight_stone) * 0.6
 		var scale_s := lerpf(0.6, 0.95, weight_stone)
