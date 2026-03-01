@@ -155,9 +155,12 @@ const STONE_FAMILY_KEYS: Array[String] = ["gray-brown", "gray-purple", "gray-sil
 const DIRT_FAMILY_KEYS: Array[String] = ["brown", "gray-brown", "gray-purple", "gray-silver"]
 const GRASS_FAMILY_KEYS: Array[String] = ["red", "orange", "emerald", "teal", "blue", "violet"]
 const DEFAULT_BOULDER_TILE_MIN := Vector2i(55, 65)
-const DEFAULT_BOULDER_TILE_MAX := Vector2i(57, 68)
-const BOULDER_TILE_OFFSET_MIN := DEFAULT_BOULDER_TILE_MIN - FAMILIES[DEFAULT_FAM_STONE]
-const BOULDER_TILE_OFFSET_MAX := DEFAULT_BOULDER_TILE_MAX - FAMILIES[DEFAULT_FAM_STONE]
+const BOULDER_TILE_BLOCK_SIZE := Vector2i(3, 4)
+const BOULDER_TILE_MIN_BY_STONE_FAMILY := {
+	"gray-brown": Vector2i(55, 65),
+	"gray-purple": Vector2i(61, 65),
+	"gray-silver": Vector2i(67, 65),
+}
 const REDSHIRT_SORT_BIAS: int = 64
 const REDSHIRT_WANDER_RADIUS: int = 6
 const REDSHIRT_WANDER_RADIUS_CLICK: int = 4
@@ -517,9 +520,9 @@ func _apply_palette_to_boulders() -> void:
 	var b := _get_boulder_gen()
 	if b == null:
 		return
-	var base: Vector2i = _family_base(_stone_family_key)
-	var min_corner: Vector2i = base + BOULDER_TILE_OFFSET_MIN
-	var max_corner: Vector2i = base + BOULDER_TILE_OFFSET_MAX
+	var min_variant: Variant = BOULDER_TILE_MIN_BY_STONE_FAMILY.get(_stone_family_key, DEFAULT_BOULDER_TILE_MIN)
+	var min_corner: Vector2i = (min_variant if min_variant is Vector2i else DEFAULT_BOULDER_TILE_MIN)
+	var max_corner: Vector2i = min_corner + BOULDER_TILE_BLOCK_SIZE - Vector2i.ONE
 	b.set_tile_region(min_corner, max_corner)
 
 func _bind_dressing_signals() -> void:
