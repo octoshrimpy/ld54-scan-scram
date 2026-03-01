@@ -59,6 +59,9 @@ var _map_signal_owner: Node
 var _wander_enabled: bool = true
 var _map_refresh_pending: bool = false
 var _returning_to_center: bool = false
+var _navigation_grid: NavigationGrid
+var _manual_path: Array[Vector2i] = []
+var _manual_path_active: bool = false
 
 func configure(
 	map_ref: Node,
@@ -71,7 +74,8 @@ func configure(
 	wander_radius: int,
 	move_interval: Vector2,
 	seconds_per_tile: float,
-	flip_horizontal: bool
+	flip_horizontal: bool,
+	navigation_grid: NavigationGrid = null
 ) -> void:
 	_map_ref = map_ref
 	_bind_map_signals(_map_ref)
@@ -105,6 +109,8 @@ func configure(
 	_rng.randomize()
 	_wander_enabled = true
 	_map_refresh_pending = false
+	_navigation_grid = navigation_grid
+	_clear_manual_path()
 	_snap_to_cell(true)
 	_schedule_next_move()
 	_refresh_debug_draw()
@@ -122,6 +128,12 @@ func _schedule_next_move() -> void:
 	if _move_timer and is_instance_valid(_move_timer):
 		if _move_timer.timeout.is_connected(_on_move_timer_timeout):
 			_move_timer.timeout.disconnect(_on_move_timer_timeout)
+	if _manual_path_active:
+		if (_active_tween != null) or (_hop_pause_timer != null):
+			return
+		_move_timer = null
+		_on_move_timer_timeout()
+		return
 	if _returning_to_center:
 		if (_active_tween != null) or (_hop_pause_timer != null):
 			return
@@ -135,7 +147,23 @@ func _on_move_timer_timeout() -> void:
 	if not _wander_enabled:
 		return
 	_move_timer = null
-	var next_cell := _pick_next_step()
+	if _returning_to_center and not _manual_path_active:
+		_build_return_path_to_center()
+	var next_cell := _cell
+	if _manual_path_active:
+		next_cell = _consume_manual_path_step()
+		if next_cell == _cell and not _manual_path_active:
+			next_cell = _pick_next_step()
+	else:
+		var did_path := false
+		if not _returning_to_center:
+			did_path = _build_random_wander_path()
+		if did_path:
+			next_cell = _consume_manual_path_step()
+			if next_cell == _cell and not _manual_path_active:
+				next_cell = _pick_next_step()
+		else:
+			next_cell = _pick_next_step()
 	if next_cell == _cell:
 		_schedule_next_move()
 		return
@@ -200,7 +228,43 @@ func set_wander_radius(radius: int) -> void:
 	_wander_radius = new_radius
 	_begin_return_to_center()
 
+func set_navigation_grid(nav: NavigationGrid) -> void:
+	_navigation_grid = nav
+
+func set_manual_path(path: Array, immediate: bool = false) -> void:
+	_manual_path.clear()
+	for cell_variant in path:
+		if cell_variant is Vector2i:
+			var cell: Vector2i = _clamp_cell_to_bounds(cell_variant)
+			if cell == _cell:
+				continue
+			_manual_path.append(cell)
+	_manual_path_active = not _manual_path.is_empty()
+	if _manual_path_active:
+		_returning_to_center = false
+		if immediate:
+			_schedule_next_move()
+
+func append_manual_path(path: Array) -> void:
+	for cell_variant in path:
+		if cell_variant is Vector2i:
+			var cell: Vector2i = _clamp_cell_to_bounds(cell_variant)
+			if cell != _cell:
+				_manual_path.append(cell)
+	_manual_path_active = not _manual_path.is_empty()
+
+func clear_manual_path() -> void:
+	_clear_manual_path()
+
+func has_manual_path() -> bool:
+	return _manual_path_active
+
+func get_current_cell() -> Vector2i:
+	return _cell
+
 func _can_step_to(target: Vector2i) -> bool:
+	if _navigation_grid != null and not _navigation_grid.is_walkable(target):
+		return false
 	if MapUtilsRef.column_has_water(_map_ref, target.x, target.y):
 		return false
 	if _map_ref != null and _map_ref.has_method("is_obstacle_cell"):
@@ -563,6 +627,7 @@ func _on_map_rebuild_finished() -> void:
 	_map_refresh_pending = false
 	refresh_map_bounds()
 	_set_wander_enabled(true)
+	_clear_manual_path()
 
 func _set_wander_enabled(enabled: bool) -> void:
 	if _wander_enabled == enabled:
@@ -610,3 +675,128 @@ func _should_delay_sort(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 func _sort_key_for_cell(cell: Vector2i) -> int:
 	var z_top := _surface_top_z(cell)
 	return MapUtilsRef.sort_key(cell.x, cell.y, z_top)
+
+func _consume_manual_path_step() -> Vector2i:
+	while not _manual_path.is_empty():
+		var next: Vector2i = _manual_path[0]
+		_manual_path.remove_at(0)
+		var clamped := _clamp_cell_to_bounds(next)
+		if clamped == _cell:
+			continue
+		if _chebyshev_distance(clamped, _cell) > 1:
+			_clear_manual_path()
+			return _cell
+		if not _can_step_to(clamped):
+			_clear_manual_path()
+			return _cell
+		return clamped
+	_clear_manual_path()
+	return _cell
+
+func _build_return_path_to_center() -> void:
+	if _navigation_grid == null:
+		return
+	if _cell == _wander_center:
+		_returning_to_center = false
+		return
+	var target_cell: Variant = _resolve_wander_target_cell()
+	if typeof(target_cell) != TYPE_VECTOR2I:
+		return
+	var start_cell: Variant = _resolve_wander_start_cell()
+	if typeof(start_cell) != TYPE_VECTOR2I:
+		return
+	var path := _navigation_grid.get_cell_path(start_cell, target_cell)
+	if path.size() <= 1:
+		return
+	path.remove_at(0)
+	_clear_manual_path()
+	for cell_variant in path:
+		if cell_variant is Vector2i:
+			_manual_path.append(cell_variant)
+	if _manual_path.is_empty():
+		return
+	_manual_path_active = true
+
+func _return_nav_search_radius(multiplier: int = 2) -> int:
+	var base_radius := 8
+	if _map_ref != null:
+		var radius: int = max(1, _map_ref.REDSHIRT_WANDER_RADIUS)
+		base_radius = max(base_radius, radius * multiplier)
+	return base_radius
+
+func _resolve_wander_target_cell() -> Variant:
+	if _navigation_grid == null:
+		return null
+	if _navigation_grid.has_point(_wander_center) and _navigation_grid.is_walkable(_wander_center):
+		return _wander_center
+	var radius := _return_nav_search_radius(2)
+	var fallback := _navigation_grid.find_closest_walkable(_wander_center, radius)
+	if not _navigation_grid.has_point(fallback):
+		return null
+	if not _navigation_grid.is_walkable(fallback):
+		return null
+	return fallback
+
+func _resolve_wander_start_cell() -> Variant:
+	if _navigation_grid == null:
+		return null
+	if _navigation_grid.has_point(_cell) and _navigation_grid.is_walkable(_cell):
+		return _cell
+	var radius := _return_nav_search_radius(1)
+	var fallback := _navigation_grid.find_closest_walkable(_cell, radius)
+	if not _navigation_grid.has_point(fallback):
+		return null
+	if not _navigation_grid.is_walkable(fallback):
+		return null
+	return fallback
+
+func _build_random_wander_path() -> bool:
+	if _navigation_grid == null:
+		return false
+	var candidates := _collect_wander_candidates()
+	if candidates.is_empty():
+		return false
+	var ordered := candidates.duplicate()
+	ordered.shuffle()
+	for target in ordered:
+		var path := _navigation_grid.get_cell_path(_cell, target)
+		if path.size() <= 1:
+			continue
+		var manual: Array[Vector2i] = []
+		for i in range(1, path.size()):
+			manual.append(path[i])
+		if manual.is_empty():
+			continue
+		_manual_path = manual
+		_manual_path_active = true
+		_returning_to_center = false
+		return true
+	return false
+
+func _collect_wander_candidates() -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if _navigation_grid == null:
+		return result
+	var min_y := _wander_center.y - _wander_radius
+	var max_y := _wander_center.y + _wander_radius
+	var min_x := _wander_center.x - _wander_radius
+	var max_x := _wander_center.x + _wander_radius
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var cell := Vector2i(x, y)
+			if not _within_bounds(cell):
+				continue
+			if cell == _cell:
+				continue
+			if not _within_wander_radius(cell):
+				continue
+			if not _navigation_grid.has_point(cell):
+				continue
+			if not _navigation_grid.is_walkable(cell):
+				continue
+			result.append(cell)
+	return result
+
+func _clear_manual_path() -> void:
+	_manual_path.clear()
+	_manual_path_active = false

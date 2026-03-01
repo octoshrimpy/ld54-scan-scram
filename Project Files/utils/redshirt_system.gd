@@ -19,6 +19,7 @@ var _focus_circle: Line2D
 var _current_wander_radius: int = 0
 var _camera_centered_by_spawn: bool = false
 var _rng := RandomNumberGenerator.new()
+var _navigation_grid: NavigationGrid
 
 func setup(map_ref: Node) -> void:
 	_map = map_ref
@@ -32,6 +33,17 @@ func set_draw_root(root: Node2D) -> void:
 func set_atlas(src: TileSetAtlasSource, tex: Texture2D) -> void:
 	_atlas_src = src
 	_atlas_tex = tex
+
+func set_navigation_grid(nav: NavigationGrid) -> void:
+	_navigation_grid = nav
+	for i in range(_active_redshirts.size() - 1, -1, -1):
+		var agent_variant: Variant = _active_redshirts[i]
+		var agent: Node = agent_variant
+		if agent == null or not is_instance_valid(agent):
+			_active_redshirts.remove_at(i)
+			continue
+		if agent.has_method("set_navigation_grid"):
+			agent.set_navigation_grid(nav)
 
 func clear_for_rebuild() -> void:
 	_camera_centered_by_spawn = false
@@ -85,8 +97,12 @@ func refresh_focus_indicator() -> void:
 	_update_epicenter_indicator()
 
 func handle_dressing_highlight(cell: Vector2i) -> void:
+	var nav_target := cell
+	if _navigation_grid != null:
+		nav_target = _navigation_grid.find_closest_walkable(cell, _map.REDSHIRT_WANDER_RADIUS * 2)
 	_set_global_wander_radius(_map.REDSHIRT_WANDER_RADIUS_CLICK)
-	_move_redshirt_focus(cell)
+	_move_redshirt_focus(nav_target)
+	_navigate_agents_to(nav_target)
 
 func set_seed(new_seed: int) -> void:
 	_rng.seed = new_seed
@@ -165,7 +181,8 @@ func _place_redshirt_sprite(
 		wander_radius,
 		_map.REDSHIRT_MOVE_INTERVAL,
 		_map.REDSHIRT_SECONDS_PER_TILE,
-		flip_h
+		flip_h,
+		_navigation_grid
 	)
 	_register_redshirt(agent)
 	var tint: Color = agent.modulate
@@ -408,3 +425,61 @@ func _ensure_focus_overlay() -> void:
 
 func _default_wander_radius() -> int:
 	return max(1, _map.REDSHIRT_WANDER_RADIUS)
+
+func _navigate_agents_to(target_cell: Vector2i) -> void:
+	if _navigation_grid == null:
+		return
+	var resolved_target: Variant = _resolve_nav_target_cell(target_cell)
+	if typeof(resolved_target) != TYPE_VECTOR2I:
+		return
+	for i in range(_active_redshirts.size() - 1, -1, -1):
+		var agent_variant: Variant = _active_redshirts[i]
+		var agent: Node = agent_variant
+		if agent == null or not is_instance_valid(agent):
+			_active_redshirts.remove_at(i)
+			continue
+		if not agent.has_method("get_current_cell"):
+			continue
+		var current_cell: Vector2i = agent.get_current_cell()
+		var path: Array[Vector2i] = _plan_navigation_path(current_cell, resolved_target)
+		if path.size() <= 1:
+			if agent.has_method("clear_manual_path"):
+				agent.clear_manual_path()
+			continue
+		path.remove_at(0)
+		if agent.has_method("set_manual_path"):
+			agent.set_manual_path(path, true)
+		if agent.has_method("set_wander_center"):
+			agent.set_wander_center(resolved_target)
+
+func _nav_search_radius(multiplier: int = 2) -> int:
+	var base_radius := 8
+	if _map != null:
+		var radius: int = max(1, _map.REDSHIRT_WANDER_RADIUS)
+		base_radius = max(base_radius, radius * multiplier)
+	return base_radius
+
+func _resolve_nav_target_cell(target: Vector2i) -> Variant:
+	if _navigation_grid == null:
+		return null
+	if _navigation_grid.has_point(target) and _navigation_grid.is_walkable(target):
+		return target
+	if _map == null:
+		return null
+	var search_radius := _nav_search_radius(2)
+	var fallback := _navigation_grid.find_closest_walkable(target, search_radius)
+	if not _navigation_grid.has_point(fallback):
+		return null
+	if not _navigation_grid.is_walkable(fallback):
+		return null
+	return fallback
+
+func _plan_navigation_path(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	if _navigation_grid == null:
+		return []
+	var query_start := start
+	if not _navigation_grid.has_point(query_start):
+		query_start = _navigation_grid.find_closest_walkable(query_start, _nav_search_radius(1))
+	if not _navigation_grid.has_point(query_start) or not _navigation_grid.is_walkable(query_start):
+		return []
+	return _navigation_grid.get_cell_path(query_start, goal)

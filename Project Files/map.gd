@@ -14,6 +14,7 @@ signal map_rebuilt
 const MapUtilsRef := preload("res://utils/map_utils.gd")
 const RedshirtSystemScript := preload("res://utils/redshirt_system.gd")
 const TerrainBuilderScript := preload("res://utils/terrain_builder.gd")
+const NavigationGridScript := preload("res://utils/navigation_grid.gd")
 
 # ── Scene refs ────────────────────────────────────────────────────────────────
 @onready var cam: Camera2D = $Camera2D
@@ -27,6 +28,8 @@ var draw_root: Node2D
 var layers: Array[TileMapLayer] = []
 var _redshirt_system: RedshirtSystem
 var _terrain_builder: TerrainBuilder
+var _navigation_grid: NavigationGrid
+var _nav_rebuild_pending: bool = false
 
 func _suffix_int(s: String) -> int:
 	var digits := ""
@@ -194,6 +197,7 @@ func _ready() -> void:
 	_setup_draw_root()
 	_ensure_redshirt_system()
 	_ensure_terrain_builder()
+	_ensure_navigation_grid()
 	_bind_atlas_source()
 	_ensure_redshirt_system()
 	_setup_wiggle_materials()
@@ -218,10 +222,13 @@ func _ensure_redshirt_system() -> void:
 	if _redshirt_system == null:
 		_redshirt_system = RedshirtSystemScript.new()
 		_redshirt_system.setup(self)
+	_ensure_navigation_grid()
 	if draw_root != null:
 		_redshirt_system.set_draw_root(draw_root)
 	if _atlas_src != null and _atlas_tex != null:
 		_redshirt_system.set_atlas(_atlas_src, _atlas_tex)
+	if _navigation_grid != null:
+		_redshirt_system.set_navigation_grid(_navigation_grid)
 
 func _ensure_terrain_builder() -> void:
 	if _terrain_builder == null:
@@ -261,6 +268,44 @@ func _hide_tilemap_layers() -> void:
 		if tm:
 			tm.visible = false
 			tm.clear()
+
+# ── navigation helpers ────────────────────────────────────────────────────────
+func get_navigation_grid() -> NavigationGrid:
+	_ensure_navigation_grid()
+	return _navigation_grid
+
+func _ensure_navigation_grid() -> void:
+	if _navigation_grid != null:
+		return
+	var dims := get_dimensions()
+	if dims == Vector2i.ZERO:
+		return
+	_navigation_grid = NavigationGridScript.new()
+	var region := Rect2i(Vector2i.ZERO, dims)
+	_navigation_grid.configure(self, region)
+
+func _refresh_navigation_walkability(immediate: bool = false) -> void:
+	if immediate:
+		_ensure_navigation_grid()
+		if _navigation_grid != null:
+			_nav_rebuild_pending = false
+			_navigation_grid.rebuild()
+		return
+	_queue_navigation_rebuild()
+
+func _queue_navigation_rebuild() -> void:
+	_ensure_navigation_grid()
+	if _navigation_grid == null:
+		return
+	if _nav_rebuild_pending:
+		return
+	_nav_rebuild_pending = true
+	call_deferred("_rebuild_navigation_grid")
+
+func _rebuild_navigation_grid() -> void:
+	_nav_rebuild_pending = false
+	if _navigation_grid != null:
+		_navigation_grid.rebuild()
 
 # ── projection & sort helpers ─────────────────────────────────────────────────
 static func sort_key(x: int, y: int, z: int) -> int:
@@ -520,6 +565,7 @@ func register_obstacle_cells(source: StringName, cells: Array[Vector2i]) -> void
 				copy.append(cell_variant)
 	_obstacle_sources[key] = copy
 	_rebuild_obstacle_lookup()
+	_queue_navigation_rebuild()
 
 func _rebuild_obstacle_lookup() -> void:
 	_obstacle_lookup.clear()
@@ -645,6 +691,7 @@ func _rebuild(new_seed: int = -1) -> void:
 	if _terrain_builder != null:
 		surfaces = _terrain_builder.build_terrain()
 	_spawn_shore_reeds(surfaces)
+	_refresh_navigation_walkability(true)
 	if _redshirt_system != null:
 		_redshirt_system.spawn_redshirts(surfaces)
 	var camera_centered := (_redshirt_system != null and _redshirt_system.camera_centered_by_spawn())
