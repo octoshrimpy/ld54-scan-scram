@@ -387,6 +387,12 @@ max_value = 4.0
 step = 0.05
 value = 1.75
 
+[node name="StonePebblesToggle" type="CheckBox" parent="TerrainControls/Panel/Margin/VBox" unique_id=1622004582]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Debug: Stone detail pebbles"
+button_pressed = false
+
 [node name="HotkeyHint" type="CanvasLayer" parent="." unique_id=1435539069]
 script = ExtResource("7_4nq4a")
 

@@ -99,6 +99,7 @@ const HEIGHT_MAX_T_CAP: float = 1.5
 @export_range(0.0, 1.5, 0.01) var height_min_t: float = 0.0
 @export_range(0.0, 1.5, 0.01) var height_max_t: float = 0.99
 @export_range(0.25, 4.0, 0.05, "or_greater") var height_shape_exp: float = 1.75
+@export var enable_stone_detail_pebbles: bool = false
 
 # ── Water controls ─────────────────────────────────────────────────────────────
 @export_range(0.0, 1.0, 0.01) var water_spawn_chance: float = 0.35
