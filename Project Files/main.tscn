@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://c4lgh5eb3j056"]
+[gd_scene load_steps=9 format=3 uid="uid://c4lgh5eb3j056"]
 
 [ext_resource type="Script" uid="uid://426rlweresxv" path="res://map.gd" id="1_0xm2m"]
 [ext_resource type="TileSet" uid="uid://b5h3lf2rqpg5u" path="res://art/main.tres" id="1_rbax2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://5usge0s66yho" path="res://trees.gd" id="4_1bvp3"]
 [ext_resource type="Script" uid="uid://ccqxg0ce61a0d" path="res://boulders.gd" id="5_lquwl"]
 [ext_resource type="Script" uid="uid://d14uvo24yvjh6" path="res://ui/terrain_controls.gd" id="6_m2ao5"]
+[ext_resource type="Script" path="res://ui/hotkey_hint.gd" id="7_4nq4a"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_v8fap"]
 
@@ -121,6 +122,9 @@ script = ExtResource("6_m2ao5")
 map_path = NodePath("../Map")
 trees_path = NodePath("../Map/objects/Trees")
 boulders_path = NodePath("../Map/objects/Boulders")
+
+[node name="HotkeyHint" type="CanvasLayer" parent="."]
+script = ExtResource("7_4nq4a")
 
 [node name="Panel" type="PanelContainer" parent="TerrainControls"]
 offset_left = 16.0

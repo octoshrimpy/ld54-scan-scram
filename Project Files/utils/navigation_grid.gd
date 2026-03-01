@@ -2,6 +2,18 @@ extends Resource
 class_name NavigationGrid
 
 const MapUtilsRef := preload("res://utils/map_utils.gd")
+const CARDINAL_DIRS: Array[Vector2i] = [
+	Vector2i(1, 0),
+	Vector2i(-1, 0),
+	Vector2i(0, 1),
+	Vector2i(0, -1),
+]
+const DIAGONAL_DIRS: Array[Vector2i] = [
+	Vector2i(1, 1),
+	Vector2i(1, -1),
+	Vector2i(-1, 1),
+	Vector2i(-1, -1),
+]
 
 # NavigationGrid — builds an A* grid over the terrain heights so multiple
 # agents can query shared paths and world-space coordinates.
@@ -37,10 +49,14 @@ func rebuild() -> void:
 
 func set_region(region: Rect2i) -> void:
 	_region = region
+	_height_cache.clear()
 	rebuild()
 
 func set_map(map_ref: Node) -> void:
+	if _map == map_ref and _map_signal_owner == map_ref:
+		return
 	_map = map_ref
+	_height_cache.clear()
 	_bind_map_signals(_map)
 	rebuild()
 
@@ -149,19 +165,9 @@ func _apply_height_rules() -> void:
 	var end_x: int = _region.position.x + _region.size.x
 	var start_y: int = _region.position.y
 	var end_y: int = _region.position.y + _region.size.y
-	var neighbor_dirs: Array[Vector2i] = [
-		Vector2i(1, 0),
-		Vector2i(-1, 0),
-		Vector2i(0, 1),
-		Vector2i(0, -1),
-	]
+	var neighbor_dirs: Array[Vector2i] = CARDINAL_DIRS.duplicate()
 	if allow_diagonal:
-		neighbor_dirs.append_array([
-			Vector2i(1, 1),
-			Vector2i(1, -1),
-			Vector2i(-1, 1),
-			Vector2i(-1, -1),
-		])
+		neighbor_dirs.append_array(DIAGONAL_DIRS)
 
 	for y in range(start_y, end_y):
 		for x in range(start_x, end_x):

@@ -1,7 +1,7 @@
 # Scan-n-Scram
 
 ## Overview
-Scan-n-Scram is a Godot 4.5 project that prototypes a Star-Trek-inspired expedition. You command a squad of redcoats beamed onto a planet slice, racing to scan minerals, flora, and fauna before hazards force an evacuation. Biomass feeds the replicator to print new crew, so exploration, data gathering, and resource management are tightly linked.
+Scan-n-Scram is a Godot 4.6 project that prototypes a Star-Trek-inspired expedition. You command a squad of redcoats beamed onto a planet slice, racing to scan minerals, flora, and fauna before hazards force an evacuation. Biomass feeds the replicator to print new crew, so exploration, data gathering, and resource management are tightly linked.
 
 ## Current Prototype Highlights
 - Procedural isometric terrain (`map.gd`) with layered dirt/stone/water and coastline accents.
@@ -12,8 +12,9 @@ Scan-n-Scram is a Godot 4.5 project that prototypes a Star-Trek-inspired expedit
 - Reusable grid-based pathfinding layer (`utils/navigation_grid.gd`) and agent base class (`utils/pathfinding_agent.gd`) for future fauna/crew movement.
 
 ## Controls
-- `Mouse Wheel` : Zoom in/out (Camera2D).
-- `Middle Mouse + Drag` : Pan camera.
+- `Mouse Wheel Up/Down` : Zoom camera in/out (`camera_2d.gd`).
+- `Middle Mouse + Drag` : Pan camera (`camera_2d.gd`).
+- `N` : Generate a new slice (new terrain + object regeneration) (`map.gd`).
 - `R` : Rebuild terrain cube (`map.gd`).
 - `Y` : Regenerate forests (`trees.gd`).
 - `B` (or `regen_boulders` action) : Regenerate boulders (`boulders.gd`).
@@ -30,9 +31,17 @@ Scan-n-Scram is a Godot 4.5 project that prototypes a Star-Trek-inspired expedit
 - `utils/pathfinding_agent.gd` – Base class for moving entities to inherit pathfinding behaviour.
 
 ## Getting Started
-1. Install **Godot 4.5.x**.
+1. Install **Godot 4.6.x**.
 2. Open this folder (`Project Files`) as a project in the Godot editor.
 3. Run the default scene to view the procedural terrain, trees, and boulders. Use the hotkeys above to regenerate content while tuning parameters.
+
+## Development
+- Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for local workflow and style guidance.
+- Keep shared map-query logic in `utils/map_utils.gd` to avoid duplicated reflection checks across generators.
+- Before shipping changes, do a quick in-editor sanity pass:
+  - Rebuild terrain (`R`) and regenerate dressing (`Y`, `B`).
+  - Confirm no parser/runtime errors in the Godot output panel.
+  - Verify navigation consumers still move as expected.
 
 ## Next Steps
 The core world dressing is in place. The TODO roadmap outlines how to expand toward the full Scan-n-Scram experience: player scanning loops, specialist systems, replicator economy, and long-term ship upgrades.
